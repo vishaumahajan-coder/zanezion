@@ -1,0 +1,336 @@
+import React, { useState } from 'react';
+import { swalSuccess, swalError, swalWarning, swalInfo, swalConfirm, swalCredentials, swalCopied } from '../../utils/swal';
+import Table from '../../components/Table';
+import Modal from '../../components/Modal';
+import { Calendar, MapPin, Plus, Star, Search, Clock, Users } from 'lucide-react';
+import { useData } from '../../context/GlobalDataContext';
+import CustomDatePicker from '../../components/CustomDatePicker';
+
+const BACKEND_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace('/api', '');
+
+const Events = () => {
+  const { events, addEvent, updateEvent, deleteEvent, fetchTickets, fetchClients, clients, hasMenuPermission } = useData();
+
+  React.useEffect(() => {
+    fetchTickets();
+    fetchClients();
+  }, []);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalType, setModalType] = useState('view');
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [formData, setFormData] = useState({ title: '', client: '', client_id: '', date: '', location: '', status: 'Planning', guestCount: 0 });
+
+  const filteredEvents = events.filter(e =>
+    e.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    e.client?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    String(e.id).toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleAction = (type, evt) => {
+    setSelectedEvent(evt);
+    setModalType(type);
+    setFormData(evt.id ? { ...evt } : { title: '', client: '', client_id: '', date: '', location: '', status: 'Planning', guestCount: 0, plannerName: '', specialRequests: '' });
+    setImageFile(null);
+    const imgPath = evt.imageUrl || evt.image_url || null;
+    setImagePreview(imgPath ? (imgPath.startsWith('http') ? imgPath : `${BACKEND_URL}${imgPath}`) : null);
+    setIsModalOpen(true);
+  };
+
+  const handleSave = async () => {
+    // Date overlap warning (non-blocking)
+    if (formData.date) {
+      const overlapping = events.filter(e =>
+        e.date === formData.date &&
+        (modalType === 'add' || e.id !== selectedEvent?.id)
+      );
+      if (overlapping.length > 0) {
+        const result = await swalConfirm('Overlap Warning',
+          `"${overlapping[0].title}" is already scheduled on ${formData.date}. Still schedule?`
+        );
+        if (!result.isConfirmed) return;
+      }
+    }
+
+    if (modalType === 'add') {
+      addEvent({ ...formData, imageFile });
+    } else if (modalType === 'edit') {
+      updateEvent({ ...selectedEvent, ...formData, imageFile });
+    }
+    setIsModalOpen(false);
+    setImageFile(null);
+    setImagePreview(null);
+  };
+
+  const handleDelete = () => {
+    deleteEvent(selectedEvent.id);
+    setIsModalOpen(false);
+  };
+
+  const columns = [
+    { header: "Event ID", accessor: "id" },
+    { header: "Event Title", accessor: "title" },
+    { header: "Date", accessor: "date" },
+    {
+      header: "Status",
+      accessor: "status",
+      render: (row) => (
+        <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${row.status === 'Active' ? 'bg-success/20 text-success' :
+          row.status === 'Planning' ? 'bg-accent/20 text-accent' : 'bg-muted/20 text-muted'
+          }`}>
+          {row.status}
+        </span>
+      )
+    },
+  ];
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Events Management</h1>
+          <p className="text-secondary mt-1">Coordinating luxury events and high-tier celebrations.</p>
+        </div>
+        <div className="flex gap-3">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search events..."
+              className="bg-white/5 border border-border rounded-xl py-2 px-10 text-sm focus:outline-none focus:border-accent w-64"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
+          </div>
+          {hasMenuPermission('Events', 'can_add') && (
+            <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
+              <Plus size={16} /> Schedule Event
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="glass-card p-6 border-accent/10">
+          <p className="text-xs text-secondary uppercase font-bold mb-1">Total Events</p>
+          <p className="text-3xl font-bold">{events.length} Events</p>
+        </div>
+        <div className="glass-card p-6 border-accent/10">
+          <p className="text-xs text-secondary uppercase font-bold mb-1">Total Guests</p>
+          <p className="text-3xl font-bold">{events.reduce((sum, e) => sum + (parseInt(e.guestCount) || 0), 0)} Guests</p>
+        </div>
+        <div className="glass-card p-6 border-accent/10">
+          <p className="text-xs text-secondary uppercase font-bold mb-1">Active Events</p>
+          <p className="text-3xl font-bold">{events.filter(e => e.status === 'Active' || e.status === 'Planning').length} Active</p>
+        </div>
+      </div>
+
+      <div className="glass-card p-6">
+        <Table
+          columns={columns}
+          data={filteredEvents}
+          actions={true}
+          onView={(item) => handleAction('view', item)}
+          onEdit={(item) => handleAction('edit', item)}
+          onDelete={(item) => handleAction('delete', item)}
+          canEdit={hasMenuPermission('Events', 'can_edit')}
+          canDelete={hasMenuPermission('Events', 'can_delete')}
+        />
+      </div>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={
+          modalType === 'view' ? 'Event Registry' :
+            modalType === 'edit' ? 'Adjust Schedule' :
+              modalType === 'delete' ? 'Cancel Event' : 'Schedule New Event'
+        }
+      >
+        <div className="space-y-6">
+          {modalType === 'delete' ? (
+            <div className="space-y-4">
+              <p className="text-secondary">Are you sure you want to cancel <span className="text-primary font-bold">{selectedEvent?.title}</span>? All related logs will be archived.</p>
+              <div className="flex gap-3 justify-end pt-4">
+                <button onClick={() => setIsModalOpen(false)} className="btn-secondary">Keep Event</button>
+                <button onClick={handleDelete} className="px-6 py-2 bg-danger text-white rounded-lg font-bold">Confirm Cancellation</button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="col-span-2 space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Event Title</label>
+                  <input
+                    type="text"
+                    value={formData.title}
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
+                    disabled={modalType === 'view'}
+                  />
+                </div>
+
+                {/* Client Selection */}
+                <div className="col-span-2 space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Client</label>
+                  <select
+                    value={formData.client_id || ''}
+                    onChange={(e) => {
+                      const selected = (clients || []).find(c => String(c.id) === e.target.value);
+                      setFormData({ ...formData, client_id: e.target.value, client: selected?.name || selected?.business_name || '' });
+                    }}
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
+                    disabled={modalType === 'view'}
+                  >
+                    <option value="">Select Client...</option>
+                    {(clients || []).map(c => (
+                      <option key={c.id} value={c.id}>{c.name || c.business_name} {c.email ? `(${c.email})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Event Date</label>
+                  <CustomDatePicker
+                    selectedDate={formData.date}
+                    onChange={(date) => setFormData({ ...formData, date })}
+                    disabled={modalType === 'view'}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Location</label>
+                  <input
+                    type="text"
+                    value={formData.location}
+                    onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
+                    disabled={modalType === 'view'}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Expected Guests</label>
+                  <input
+                    type="number"
+                    value={formData.guestCount}
+                    onChange={(e) => setFormData({ ...formData, guestCount: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
+                    disabled={modalType === 'view'}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Event Planner Name</label>
+                  <input
+                    type="text"
+                    value={formData.plannerName || ''}
+                    onChange={(e) => setFormData({ ...formData, plannerName: e.target.value })}
+                    placeholder="Enter planner name"
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
+                    disabled={modalType === 'view'}
+                  />
+                </div>
+
+                {/* Image Upload */}
+                <div className="col-span-1 md:col-span-2 space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Inspirational Picture / Moodboard</label>
+                  {modalType !== 'view' ? (
+                    <label className="block border border-dashed border-border rounded-lg p-4 text-center hover:border-accent/50 cursor-pointer transition-colors relative">
+                      {imagePreview ? (
+                        <div className="space-y-2">
+                          <img src={imagePreview} alt="Preview" className="max-h-32 mx-auto rounded-lg object-cover" />
+                          <p className="text-[10px] text-accent font-bold uppercase">Click to change image</p>
+                        </div>
+                      ) : (
+                        <div className="py-4">
+                          <p className="text-xs text-secondary italic">Click to upload image (JPG, PNG, GIF)</p>
+                          <p className="text-[10px] text-muted mt-1">Max 5MB</p>
+                        </div>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/gif"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files[0];
+                          if (file) {
+                            setImageFile(file);
+                            setImagePreview(URL.createObjectURL(file));
+                          }
+                        }}
+                      />
+                    </label>
+                  ) : imagePreview ? (
+                    <img src={imagePreview} alt="Event" className="max-h-40 rounded-lg object-cover" />
+                  ) : (
+                    <p className="text-xs text-muted italic p-4 bg-white/5 rounded-lg">No image uploaded</p>
+                  )}
+                </div>
+
+                <div className="col-span-1 md:col-span-2 space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Special Requests & Notes</label>
+                  <textarea
+                    value={formData.specialRequests || ''}
+                    onChange={(e) => setFormData({ ...formData, specialRequests: e.target.value })}
+                    placeholder="Bespoke requests, dietary restrictions, etc."
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none min-h-[100px]"
+                    disabled={modalType === 'view'}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Status</label>
+                  <select
+                    value={formData.status}
+                    onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
+                    disabled={modalType === 'view'}
+                  >
+                    <option>Planning</option>
+                    <option>Active</option>
+                    <option>Setup</option>
+                    <option>Completed</option>
+                  </select>
+                </div>
+              </div>
+
+              {modalType === 'view' && (
+                <div className="mt-6 space-y-3">
+                  <h5 className="text-xs font-bold text-accent uppercase tracking-widest">Protocol Details</h5>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-border">
+                      <Users size={16} className="text-secondary" />
+                      <div>
+                        <p className="text-[10px] text-muted uppercase font-bold">Planned Attendance</p>
+                        <p className="text-sm font-bold">{formData.guestCount || 0} Guests</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl border border-border">
+                      <Star size={16} className="text-secondary" />
+                      <div>
+                        <p className="text-[10px] text-muted uppercase font-bold">Event Planner</p>
+                        <p className="text-sm font-bold">{formData.plannerName || 'Not Assigned'}</p>
+                      </div>
+                    </div>
+                  </div>
+                  {formData.specialRequests && (
+                    <div className="p-3 bg-white/5 rounded-xl border border-border">
+                      <p className="text-[10px] text-muted uppercase font-bold mb-1">Special Requests & Notes</p>
+                      <p className="text-sm text-secondary whitespace-pre-wrap">{formData.specialRequests}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-3 justify-end pt-4">
+                <button onClick={() => setIsModalOpen(false)} className="btn-secondary">{modalType === 'view' ? 'Close' : 'Cancel'}</button>
+                {modalType !== 'view' && <button onClick={handleSave} className="btn-primary">Finalize Schedule</button>}
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+    </div>
+  );
+};
+
+export default Events;

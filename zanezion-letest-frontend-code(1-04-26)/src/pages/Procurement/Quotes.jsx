@@ -1,0 +1,487 @@
+import React, { useState } from 'react';
+import Table from '../../components/Table';
+import Modal from '../../components/Modal';
+import {
+  Plus, Search, FileText, Store,
+  DollarSign, Clock, CheckCircle, XCircle,
+  BarChart3, ShieldCheck, Trash2, Calendar, HardDrive, Printer
+} from 'lucide-react';
+import { useData } from '../../context/GlobalDataContext';
+import CustomDatePicker from '../../components/CustomDatePicker';
+import StatusBadge from '../../components/StatusBadge';
+import Pagination from '../../components/Common/Pagination';
+
+const Quotes = () => {
+  const { quotes, addQuote, updateQuote, deleteQuote, addOrder, fetchQuotes, hasMenuPermission } = useData();
+  const [page, setPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  React.useEffect(() => {
+    fetchQuotes({ search: searchTerm });
+  }, [fetchQuotes, searchTerm]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalType, setModalType] = useState('view');
+  const [selectedQuote, setSelectedQuote] = useState(null);
+  const [formData, setFormData] = useState({
+    vendor: '',
+    vendorId: 1,
+    items: [{ name: '', qty: 1, price: 0 }],
+    leadTime: '',
+    validity: '',
+    status: 'Pending'
+  });
+
+  const filteredQuotes = quotes;
+  const itemsPerPage = 10;
+  const currentQuotes = filteredQuotes.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+  const totalPages = Math.ceil(filteredQuotes.length / itemsPerPage);
+
+  const handleAction = (type, quote) => {
+    setSelectedQuote(quote);
+    setModalType(type);
+    setFormData(quote.id ? {
+      ...quote,
+      items: quote.items || [{ name: '', qty: 1, price: 0 }]
+    } : {
+      vendor: '',
+      vendorId: 1,
+      items: [{ name: '', qty: 1, price: 0 }],
+      leadTime: '3 Days',
+      validity: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      status: 'Pending'
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleAddItem = () => {
+    setFormData({ ...formData, items: [...formData.items, { name: '', qty: 1, price: 0 }] });
+  };
+
+  const removeItem = (index) => {
+    setFormData({ ...formData, items: formData.items.filter((_, i) => i !== index) });
+  };
+
+  const handleSave = () => {
+    const total = formData.items.reduce((acc, i) => acc + (parseFloat(i.price) * parseInt(i.qty)), 0);
+    const finalData = { ...formData, total, date: new Date().toISOString().split('T')[0] };
+    if (modalType === 'add') {
+      addQuote(finalData);
+    } else if (modalType === 'edit') {
+      updateQuote(finalData);
+    } else if (modalType === 'delete') {
+      deleteQuote(selectedQuote.id);
+    }
+    setIsModalOpen(false);
+  };
+
+  const handleAccept = () => {
+    addOrder({
+      clientId: 1, // Default or selected
+      client: 'Platinum Client X',
+      items: selectedQuote.items,
+      vendorId: selectedQuote.vendorId,
+      vendor: 'Monaco Global', // Derived from ID usually
+      status: 'Confirmed',
+      location: 'Central Vault'
+    });
+    updateQuote({ ...selectedQuote, status: 'Accepted' });
+    setIsModalOpen(false);
+  };
+
+  const handlePrint = (quote) => {
+    setSelectedQuote(quote);
+    setTimeout(() => {
+      window.print();
+    }, 300);
+  };
+
+  const columns = [
+    { header: "Institutional ID", accessor: "id", render: (row) => <span className="font-mono font-bold text-accent">{row.id}</span> },
+    { header: "Supply Partner", accessor: "vendor_name", render: (row) => row.vendor_name || row.vendor || 'Unknown Provider' },
+    { header: "Request Date", accessor: "date", render: (row) => (row.created_at || row.date)?.split('T')[0] || 'N/A' },
+    { header: "Protocol Validity", accessor: "validity_date", render: (row) => (row.validity_date || row.validity)?.split('T')[0] || 'N/A' },
+    {
+      header: "Settlement Value",
+      accessor: "total_amount",
+      render: (row) => <span className="font-black text-white">${parseFloat(row.total_amount || row.total || 0).toLocaleString()}</span>
+    },
+    {
+      header: "Protocol Status",
+      accessor: "status",
+      render: (row) => <StatusBadge status={row.status} />
+    },
+  ];
+
+  const totalValue = quotes.reduce((acc, q) => acc + parseFloat(q.total_amount || q.total || 0), 0);
+  const activeQuotes = quotes.filter(q => q.status === 'Pending').length;
+  const acceptedQuotes = quotes.filter(q => q.status === 'Accepted').length;
+
+  return (
+    <div className="space-y-8">
+      <div className="no-print space-y-8">
+      {/* Header */}
+      <div className="no-print-logic flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Institutional Quoting</h1>
+          <p className="text-secondary mt-1 text-sm">Manage luxury asset acquisition and vendor competitive analysis.</p>
+        </div>
+        {hasMenuPermission('Quotes', 'can_add') && (
+          <button className="btn-primary flex items-center gap-2 self-start" onClick={() => handleAction('add', {})}>
+            <Plus size={16} /> New Quote Request
+          </button>
+        )}
+      </div>
+
+      {/* Stat Cards */}
+      <div className="no-print-logic grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: 'Total Quotes', value: quotes.length, icon: FileText, color: 'text-accent' },
+          { label: 'Total Value', value: `$${totalValue.toLocaleString()}`, icon: DollarSign, color: 'text-success' },
+          { label: 'Active', value: activeQuotes, icon: Clock, color: 'text-info' },
+          { label: 'Accepted', value: acceptedQuotes, icon: CheckCircle, color: 'text-success' },
+        ].map((stat, i) => (
+          <div key={i} className="glass-card p-5 flex items-center gap-4 hover:border-accent/20 transition-all group">
+            <div className={`w-10 h-10 rounded-xl bg-white/[0.03] border border-white/5 flex items-center justify-center ${stat.color} group-hover:scale-110 transition-transform flex-shrink-0`}>
+              <stat.icon size={20} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black text-muted uppercase tracking-widest truncate">{stat.label}</p>
+              <p className="text-xl font-black text-white">{stat.value}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="no-print-logic glass-card p-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+          <div className="relative max-w-sm w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={18} />
+            <input
+              type="text"
+              placeholder="Search by ID or Manifest..."
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setPage(1);
+              }}
+              className="w-full bg-background border border-border rounded-lg py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-accent"
+            />
+          </div>
+        </div>
+
+        <Table
+          columns={columns}
+          data={currentQuotes}
+          actions={true}
+          customAction={(quote) => (
+            <button
+              onClick={(e) => { e.stopPropagation(); handlePrint(quote); }}
+              className="p-2 rounded-lg text-secondary hover:text-white hover:bg-white/10 transition-all flex items-center justify-center"
+              title="Print Quote"
+            >
+              <Printer size={16} />
+            </button>
+          )}
+          onView={(item) => handleAction('view', item)}
+          onEdit={(item) => handleAction('edit', item)}
+          onDelete={(item) => handleAction('delete', item)}
+          canEdit={hasMenuPermission('Quotes', 'can_edit')}
+          canDelete={hasMenuPermission('Quotes', 'can_delete')}
+        />
+        {filteredQuotes.length > itemsPerPage && (
+          <div className="mt-6 border-t border-white/5 pt-6">
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              totalItems={filteredQuotes.length}
+            />
+          </div>
+        )}
+      </div>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={
+          modalType === 'view' ? 'Institutional Quote Manifest' :
+            modalType === 'edit' ? 'Update Procurement Terms' :
+              modalType === 'delete' ? 'Discard Quote' : 'Initiate Quote Submission'
+        }
+      >
+        <div className="space-y-6">
+          {modalType === 'delete' ? (
+            <div className="space-y-4">
+              <p className="text-secondary">Are you sure you want to permanently discard the quote request <span className="text-accent font-bold">{selectedQuote?.id}</span>?</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] font-bold text-muted uppercase">Supply Partner</label>
+                  <input type="text" value={formData.vendor} onChange={(e) => setFormData({ ...formData, vendor: e.target.value })} className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold" disabled={modalType === 'view'} placeholder="e.g. Monaco Global Services" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Protocol ID</label>
+                  <input type="text" value={formData.id || 'AUTO'} className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-mono text-accent" disabled={true} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Protocol Status</label>
+                  <select className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold" value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value })} disabled={modalType === 'view'}>
+                    <option value="Pending">Pending</option>
+                    <option value="Accepted">Accepted</option>
+                    <option value="Rejected">Rejected</option>
+                    <option value="Expired">Expired</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Projected Lead Time</label>
+                  <input type="text" value={formData.leadTime} onChange={(e) => setFormData({ ...formData, leadTime: e.target.value })} className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none" disabled={modalType === 'view'} placeholder="e.g. 5 Business Days" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Validity Threshold</label>
+                  <input type="date" value={formData.validity} onChange={(e) => setFormData({ ...formData, validity: e.target.value })} className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none" disabled={modalType === 'view'} />
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] font-bold text-muted uppercase">Institutional Quote PDF</label>
+                  <div className="flex items-center gap-4">
+                    <label className="flex-1 flex items-center justify-between bg-white/5 border border-dashed border-accent/20 rounded-xl px-4 py-3 cursor-pointer hover:bg-accent/5 transition-all">
+                      <div className="flex items-center gap-3">
+                        <HardDrive size={18} className="text-accent" />
+                        <span className="text-xs text-secondary">{formData.pdfName || 'Upload signed protocol manifest...'}</span>
+                      </div>
+                      <span className="text-[10px] font-black text-accent uppercase tracking-widest bg-accent/10 px-3 py-1 rounded-lg">Browse</span>
+                      <input type="file" className="hidden" onChange={(e) => setFormData({ ...formData, pdfName: e.target.files[0]?.name })} disabled={modalType === 'view'} />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-bold text-muted uppercase tracking-widest">Asset Manifest Highlights</label>
+                  {modalType !== 'view' && (
+                    <button onClick={handleAddItem} className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1">
+                      <Plus size={10} /> Add Item
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                  {formData.items.map((item, idx) => (
+                    <div key={idx} className="flex gap-2 items-end bg-white/5 p-2 rounded-lg border border-border">
+                      <div className="flex-1 space-y-1">
+                        <label className="text-[8px] text-muted uppercase">Asset Name</label>
+                        <input
+                          type="text"
+                          value={item.name}
+                          onChange={(e) => {
+                            const newItems = [...formData.items];
+                            newItems[idx].name = e.target.value;
+                            setFormData({ ...formData, items: newItems });
+                          }}
+                          className="w-full bg-transparent border-0 border-b border-border focus:border-accent text-xs p-0 outline-none"
+                          placeholder="Product Title"
+                          disabled={modalType === 'view'}
+                        />
+                      </div>
+                      <div className="w-16 space-y-1">
+                        <label className="text-[8px] text-muted uppercase">Qty</label>
+                        <input
+                          type="number"
+                          value={item.qty}
+                          onChange={(e) => {
+                            const newItems = [...formData.items];
+                            newItems[idx].qty = e.target.value;
+                            setFormData({ ...formData, items: newItems });
+                          }}
+                          className="w-full bg-transparent border-0 border-b border-border focus:border-accent text-xs p-0 outline-none"
+                          disabled={modalType === 'view'}
+                        />
+                      </div>
+                      <div className="w-20 space-y-1">
+                        <label className="text-[8px] text-muted uppercase">Unit Price</label>
+                        <input
+                          type="number"
+                          value={item.price}
+                          onChange={(e) => {
+                            const newItems = [...formData.items];
+                            newItems[idx].price = e.target.value;
+                            setFormData({ ...formData, items: newItems });
+                          }}
+                          className="w-full bg-transparent border-0 border-b border-border focus:border-accent text-xs p-0 outline-none"
+                          disabled={modalType === 'view'}
+                          step="0.01"
+                        />
+                      </div>
+                      {modalType !== 'view' && formData.items.length > 1 && (
+                        <button onClick={() => removeItem(idx)} className="p-1.5 text-danger hover:bg-danger/10 rounded-lg">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {modalType === 'view' && (
+                <div className="mt-6 p-4 bg-white/5 rounded-xl border border-border space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 text-sm text-secondary">
+                      <DollarSign size={16} className="text-accent" /> Total Manifest Value
+                    </div>
+                    <span className="text-xl font-bold font-mono text-accent">
+                      ${formData.items.reduce((acc, i) => acc + (parseFloat(i.price) * parseInt(i.qty)), 0).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 justify-end pt-6">
+                <button onClick={() => setIsModalOpen(false)} className="btn-secondary">{modalType === 'view' ? 'Close' : 'Cancel'}</button>
+                {modalType === 'view' && (
+                  <button onClick={() => handlePrint(formData)} className="btn-secondary flex items-center gap-2">
+                    <Printer size={16} /> Print Quote
+                  </button>
+                )}
+                {modalType === 'view' && formData.status === 'Active' && (
+                  <button onClick={handleAccept} className="btn-primary bg-success hover:bg-success/90 border-success">Accept & Generate Order</button>
+                )}
+                {modalType === 'delete' && <button onClick={handleSave} className="btn-primary bg-danger hover:bg-danger/80 border-danger">Confirm Delete</button>}
+                {(modalType === 'add' || modalType === 'edit') && <button onClick={handleSave} className="btn-primary">Finalize Procurement Offer</button>}
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+            </div>
+
+      {/* Premium Institutional Quote Print Template */}
+      <div className="hidden print-quote-container bg-white text-black font-sans">
+        {selectedQuote && (
+          <div className="w-full flex-1 flex flex-col">
+            {/* Sovereign Header */}
+            <div className="flex justify-between items-start border-b-[3px] border-black pb-4 mb-4 print-section">
+              <div className="flex items-center gap-5">
+                {/* Logo removed per user request - watermark used instead */}
+                <div>
+                  <h1 className="text-xl font-black italic uppercase tracking-tighter leading-none">ZANEZION</h1>
+                  <p className="text-[8px] font-black uppercase tracking-[0.2em] mt-0.5 opacity-80">Institutional Sourcing & Supply Chain</p>
+                  <div className="mt-1.5 text-[7px] font-bold uppercase text-gray-400 tracking-widest leading-none">
+                    Nassau, Bahamas | Sovereign HQ | Procurement Division
+                  </div>
+                </div>
+              </div>
+              <div className="text-right">
+                <h2 className="text-lg font-black text-black tracking-tighter italic border-b border-black inline-block mb-1 uppercase">Official Quote</h2>
+                <p className="text-[9px] font-black text-gray-400 mt-0.5">PROTOCOL ID: {selectedQuote.id}</p>
+                <p className="text-[7px] font-black uppercase tracking-widest leading-none">ISSUED. {selectedQuote.date}</p>
+              </div>
+            </div>
+
+            {/* Counterparty & Status Section */}
+            <div className="grid grid-cols-2 gap-8 mb-6 px-1 print-section">
+              <div className="border-l-2 border-black pl-4">
+                <p className="text-[6px] font-black uppercase tracking-widest opacity-40 mb-0.5 underline italic">Supply Partner:</p>
+                <p className="text-base font-black italic tracking-tight uppercase leading-tight">{selectedQuote.vendor}</p>
+                <p className="text-[8px] text-gray-500 mt-0.5 font-medium leading-tight italic">Strategic Sourcing Partner</p>
+                <p className="text-[7px] font-black mt-1 text-gray-400">REGISTRY: {selectedQuote.vendorId || 'ZN-VND-EXT'}</p>
+              </div>
+              <div className="text-right">
+                <div className="inline-block bg-black text-white px-3 py-1 rounded-sm transform -skew-x-12">
+                  <p className="text-[8px] font-black uppercase tracking-widest skew-x-12 leading-none">Status: {selectedQuote.status}</p>
+                </div>
+                <div className="mt-2">
+                  <p className="text-[6px] font-black uppercase tracking-widest opacity-40 mb-0.5 leading-none">Lead Time:</p>
+                  <p className="text-sm font-black italic uppercase leading-none">{selectedQuote.leadTime || 'Immediate Fulfillment'}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* High-Resolution Itemized Ledger */}
+            <div className="mb-6 print-section">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 border-y border-black">
+                    <th className="text-left py-2 px-2 text-[8px] font-black uppercase tracking-widest">Description of Sourcing / Service Protocol</th>
+                    <th className="text-center py-2 px-2 text-[8px] font-black uppercase tracking-widest w-16">Qty</th>
+                    <th className="text-right py-2 px-2 text-[8px] font-black uppercase tracking-widest w-32">Valuation (USD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedQuote.items?.map((item, idx) => (
+                    <tr key={idx} className="border-b border-gray-100">
+                      <td className="py-3 px-2">
+                        <div className="flex flex-col gap-0.5">
+                          <p className="font-black text-sm italic tracking-tight uppercase leading-tight">{item.name}</p>
+                          <p className="text-[7px] text-gray-400 font-bold uppercase tracking-widest italic leading-none">Institutional Asset Category</p>
+                        </div>
+                      </td>
+                      <td className="text-center py-3 px-2 font-black italic text-xs opacity-40 leading-none">{item.qty || 1}</td>
+                      <td className="text-right py-3 px-2">
+                        <span className="text-sm font-black tracking-tighter">
+                          ${(parseFloat(item.price || 0) * parseInt(item.qty || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Financial Totals & Verification */}
+            <div className="flex justify-end mb-6 pr-2 print-section">
+              <div className="w-64">
+                <div className="flex justify-between items-center py-1.5 border-t border-black mb-1.5">
+                  <p className="text-[8px] font-black uppercase tracking-tighter opacity-100 italic">Subtotal</p>
+                  <span className="text-sm font-bold italic">${parseFloat(selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between items-center p-3 bg-black text-white rounded-none">
+                  <div className="flex flex-col">
+                    <p className="text-[6px] font-black uppercase tracking-widest opacity-60">Total Offer Value</p>
+                    <p className="text-[7px] font-bold leading-none mt-0.5">Fixed Registry Price</p>
+                  </div>
+                  <h3 className="text-xl font-black italic tracking-tighter">${parseFloat(selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD</h3>
+                </div>
+                <p className="text-[6px] text-gray-400 font-bold italic mt-1.5 text-right uppercase tracking-widest">Valid Until: {selectedQuote.validity}</p>
+              </div>
+            </div>
+
+            {/* Legal & Sovereign Terms */}
+            <div className="p-4 bg-gray-50 border-l-[6px] border-black italic print-section mb-6">
+              <h4 className="text-[8px] font-black uppercase tracking-[0.05em] mb-2 text-black underline leading-none">Terms of Procurement Offer</h4>
+              <div className="grid grid-cols-2 gap-6">
+                <div className="text-[6px] text-gray-400 leading-normal uppercase font-bold text-justify">
+                  1. <strong>Valuation Thresholds:</strong> This quote is calculated based on current asset indices and is valid strictly until the maturation date.
+                  2. <strong>Clearing:</strong> All lead times are institutional estimates subject to logistical throughput efficiency.
+                </div>
+                <div className="text-[6px] text-gray-400 leading-normal uppercase font-bold text-justify">
+                  3. <strong>Jurisdiction:</strong> Governance is restricted to the sovereign laws of the Commonwealth of the Bahamas.
+                  4. <strong>Asset Assurance:</strong> All assets verified via master registry for authenticity and jurisdictional compliance.
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Authenticator */}
+            <div className="mt-auto pt-4 border-t border-gray-100 flex justify-between items-end print-section">
+              <div>
+                <p className="text-[6px] font-black uppercase tracking-[0.2em] opacity-30 mb-0.5 italic">Authorized Sourcing Signature</p>
+                <div className="relative">
+                  <div className="w-48 h-[1px] bg-black/20" />
+                  <p className="absolute -top-3 left-1 font-black italic text-gray-300 text-[10px] opacity-20 select-none uppercase tracking-tighter leading-none">Chief Procurement Officer</p>
+                </div>
+                <p className="text-[7px] font-black mt-1.5 uppercase tracking-widest leading-none">Sourcing Division | ZANEZION</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[6px] font-black uppercase tracking-[0.3em] opacity-30 mb-0.5">HASH: ZZ-QUO-{Date.now().toString(16).slice(-6).toUpperCase()}</p>
+                <p className="text-[8px] font-black tracking-tighter italic leading-none">VERIFIED PROTOCOL v3.0 // NASSAU HQ</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Quotes;
