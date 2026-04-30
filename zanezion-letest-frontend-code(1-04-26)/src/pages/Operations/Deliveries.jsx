@@ -13,7 +13,7 @@ import { useData } from '../../context/GlobalDataContext';
 import CustomDatePicker from '../../components/CustomDatePicker';
 
 const Deliveries = () => {
-  const { deliveries, addDelivery, updateDelivery, deleteDelivery, users, fleet, fetchDeliveries, hasMenuPermission } = useData();
+  const { deliveries, addDelivery, updateDelivery, deleteDelivery, users, fleet, fetchDeliveries, fetchStaff, hasMenuPermission, warehouses, fetchWarehouses } = useData();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [debounceSearch, setDebounceSearch] = useState('');
@@ -30,7 +30,9 @@ const Deliveries = () => {
 
   useEffect(() => {
     fetchDeliveries();
-  }, [fetchDeliveries]);
+    fetchWarehouses();
+    fetchStaff();
+  }, [fetchDeliveries, fetchWarehouses, fetchStaff]);
 
   const handlePageChange = (newPage) => {
     setCurrentPage(newPage);
@@ -99,13 +101,14 @@ const Deliveries = () => {
 
   const handleAction = (type, del) => {
     setSelectedDelivery(del || {});
-    setModalType(type);
+    const nextModalType = type === 'delivered' ? 'edit' : type;
+    setModalType(nextModalType);
     const parseItems = (raw) => {
       if (Array.isArray(raw)) return raw;
       if (typeof raw === 'string') { try { const p = JSON.parse(raw); if (Array.isArray(p)) return p; } catch(e) {} }
       return null;
     };
-    setFormData(del && del.id ? {
+    const nextFormData = del && del.id ? {
       ...del,
       items: parseItems(del.items) || [{ name: del.item || '', qty: 1, weight: '', length: '', width: '', height: '' }],
       pod: del.pod || { signature: null, image: null, actualTime: null }
@@ -127,7 +130,9 @@ const Deliveries = () => {
       driver: '',
       mode: del?.mode || 'Road',
       pod: { signature: null, image: null, actualTime: null }
-    });
+    };
+    // Quick "Complete Delivery" flow from list action.
+    setFormData(type === 'delivered' ? { ...nextFormData, status: 'Delivered' } : nextFormData);
     setIsModalOpen(true);
   };
 
@@ -243,6 +248,19 @@ const Deliveries = () => {
           onDelete={(item) => handleAction('delete', item)}
           canEdit={hasMenuPermission('Deliveries', 'can_edit')}
           canDelete={hasMenuPermission('Deliveries', 'can_delete')}
+          customAction={(item) => (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleAction('delivered', item);
+              }}
+              className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide text-success border border-success/30 bg-success/10 hover:bg-success/20 transition-all"
+              title="Complete Delivery (POD)"
+            >
+              Delivered
+            </button>
+          )}
         />
         {filteredDeliveries.length > itemsPerPage && (
           <Pagination 
@@ -553,8 +571,8 @@ const Deliveries = () => {
                       disabled={modalType === 'view'}
                     >
                       <option value="">Assign Personnel...</option>
-                      {users.filter(u => u.role === 'Field Staff' || u.role === 'Operational Staff').map(u => (
-                        <option key={u.id} value={u.name}>{u.name}</option>
+                      {users.filter(u => ['staff', 'operation', 'logistics', 'concierge'].includes(u.role)).map(u => (
+                        <option key={u.id} value={u.name}>{u.name} — {u.role}</option>
                       ))}
                     </select>
                   </div>
@@ -620,8 +638,20 @@ const Deliveries = () => {
                       <div className="space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="space-y-1">
-                            <label className="text-[8px] font-bold text-muted uppercase">Pickup Location</label>
-                            <input type="text" value={formData.pickupLocation || ''} onChange={(e) => setFormData({ ...formData, pickupLocation: e.target.value })} className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs outline-none focus:border-accent" placeholder="Warehouse / Vendor" disabled={modalType === 'view'} />
+                            <label className="text-[8px] font-bold text-muted uppercase">Pickup Location (Hub)</label>
+                            <select 
+                              value={formData.pickupLocation || ''} 
+                              onChange={(e) => setFormData({ ...formData, pickupLocation: e.target.value })} 
+                              className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs outline-none focus:border-accent font-bold appearance-none cursor-pointer" 
+                              disabled={modalType === 'view'}
+                            >
+                              <option value="">Select Warehouse / Hub...</option>
+                              {warehouses.map(wh => (
+                                <option key={wh.id} value={wh.name}>{wh.name}</option>
+                              ))}
+                              <option value="Third Party Vendor">Third Party Vendor</option>
+                              <option value="Client Site">Client Site</option>
+                            </select>
                           </div>
                           <div className="space-y-1">
                             <label className="text-[8px] font-bold text-muted uppercase">Package Weight</label>

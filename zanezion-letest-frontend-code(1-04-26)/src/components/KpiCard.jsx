@@ -2,7 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
-const KpiCard = ({ label, value, change, type, icon: Icon, color }) => {
+const KpiCard = ({ label, value, change, type, icon: Icon, color, compact }) => {
   const getTrendIcon = () => {
     if (type === 'increase') return <TrendingUp size={16} className="text-success" />;
     if (type === 'decrease') return <TrendingDown size={16} className="text-danger" />;
@@ -27,12 +27,14 @@ const KpiCard = ({ label, value, change, type, icon: Icon, color }) => {
         <div className="p-3 bg-accent/10 rounded-xl text-accent">
           {Icon && <Icon size={24} />}
         </div>
+        {!compact && (
         <div className="flex items-center gap-1 text-xs font-semibold">
           {getTrendIcon()}
           <span className={type === 'increase' ? 'text-success' : type === 'decrease' ? 'text-danger' : 'text-warning'}>
             {change}
           </span>
         </div>
+        )}
       </div>
 
       <div>

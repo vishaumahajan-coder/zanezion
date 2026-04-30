@@ -5,25 +5,56 @@
  * @returns {string} - The normalized canonical role key.
  */
 export const normalizeRole = (role) => {
-    if (!role) return 'staff'; // Default fallback
+    if (!role) return 'staff';
 
     const r = role.toLowerCase().trim();
 
     if (r.includes('superadmin') || r.includes('super admin') || r.includes('super_admin')) return 'superadmin';
-    // Company admin (DB role `admin`) must stay `admin` — mapping to `client` broke invoices and permission UI
+    // 'admin' = either ZaneZion internal manager OR SaaS tenant admin — both get full access
     if (r === 'admin') return 'admin';
-    if (r === 'manager') return 'operations';         // Backend 'manager' maps to operations
-    if (r === 'operation') return 'operations';       // Backend 'operation' → frontend 'operations'
+    if (r === 'manager') return 'operations';
+    if (r === 'operation') return 'operations';
     if (r.includes('procurement')) return 'procurement';
     if (r.includes('operations')) return 'operations';
     if (r.includes('logistics')) return 'logistics';
     if (r.includes('inventory') || r.includes('stock')) return 'inventory';
     if (r.includes('concierge')) return 'concierge';
-    if (r.includes('saas_client') || r.includes('saas client') || r.includes('saas')) return 'saas_client';
-    if (r === 'customer') return 'customer';            // Backend 'customer' → frontend 'customer'
-    if (r.includes('client')) return 'client';
+    // 'saas_client' kept for backward compat (old accounts before multi-tenant fix)
+    if (r.includes('saas_client') || r.includes('saas client')) return 'saas_client';
+    if (r === 'customer') return 'customer';
+    // 'client' = Business client (approved via website signup)
+    if (r === 'client') return 'client';
     if (r.includes('vendor')) return 'vendor';
     if (r.includes('staff')) return 'staff';
 
-    return 'staff'; // Final fallback for unknown roles
+    return 'staff';
+};
+
+export const normalizeMenuPathBase = (path) => {
+    if (!path) return '';
+    const base = String(path).trim().split('?')[0];
+    let out = base.startsWith('/') ? base : `/${base.replace(/^\/+/, '')}`;
+    out = out.replace(/\/+$/, '') || '/';
+    return out;
+};
+
+/** Whether current URL is allowed by a login `menuPermissions[].path` row. */
+export const menuPathGrantsAccess = (pathname, search, permPath) => {
+    if (!permPath) return false;
+    const full = String(permPath).trim();
+    if (normalizeMenuPathBase(full) === '/dashboard' && !full.includes('?')) return false;
+    if (full.includes('?')) {
+        const [base, query] = full.split('?');
+        if (normalizeMenuPathBase(pathname) !== normalizeMenuPathBase(base)) return false;
+        const want = new URLSearchParams(query);
+        const have = new URLSearchParams((search || '').replace(/^\?/, ''));
+        for (const [k, v] of want.entries()) {
+            if (have.get(k) !== v) return false;
+        }
+        return true;
+    }
+    const p = normalizeMenuPathBase(full);
+    const cur = normalizeMenuPathBase(pathname);
+    if (p === '/dashboard') return false;
+    return cur === p || cur.startsWith(`${p}/`);
 };

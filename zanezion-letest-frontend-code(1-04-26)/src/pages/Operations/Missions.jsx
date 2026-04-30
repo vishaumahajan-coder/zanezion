@@ -10,8 +10,9 @@ import {
 import api from '../../utils/api';
 
 const Missions = () => {
-  const { 
+  const {
     missions, fetchMissions, users, fleet, fetchFleet, fetchStaff,
+    projects, fetchProjects,
     addLog, updateMissionStatus, assignMissionDriver, deleteMission,
     hasMenuPermission
   } = useData();
@@ -30,7 +31,17 @@ const Missions = () => {
     fetchMissions();
     fetchFleet();
     fetchStaff();
-  }, [fetchMissions, fetchFleet, fetchStaff]);
+    if (fetchProjects) fetchProjects();
+  }, [fetchMissions, fetchFleet, fetchStaff, fetchProjects]);
+
+  // Link mission to its project by orderId or projectId
+  const getProject = (mission) => {
+    if (!projects || !projects.length) return null;
+    return projects.find(p =>
+      (mission.projectId && String(p.id) === String(mission.projectId)) ||
+      (mission.orderId && (String(p.orderId) === String(mission.orderId) || String(p.id) === String(mission.orderId)))
+    ) || null;
+  };
 
   const handleAction = (type, mission) => {
     setSelectedMission(mission);
@@ -67,9 +78,32 @@ const Missions = () => {
 
   const columns = [
     { header: "Mission ID", accessor: "id" },
-    { header: "Order ID", accessor: "orderId" },
-    { 
-      header: "Type", 
+    { header: "Ref / Order ID", accessor: "orderId" },
+    {
+      header: "Project",
+      accessor: "orderId",
+      render: (row) => {
+        const proj = getProject(row);
+        return proj ? (
+          <div className="space-y-0.5 max-w-[150px]">
+            <p className="text-xs font-bold text-white truncate">{proj.name || proj.title || 'N/A'}</p>
+            {proj.description && (
+              <p className="text-[9px] text-secondary italic truncate leading-tight">{proj.description}</p>
+            )}
+            <p className="text-[9px] text-accent font-black uppercase tracking-wider">
+              Ref #{proj.id}{row.orderId ? ` · ORD-${row.orderId}` : ''}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            <span className="text-muted italic text-xs">No Project</span>
+            {row.orderId && <p className="text-[9px] text-accent">ORD-{row.orderId}</p>}
+          </div>
+        );
+      }
+    },
+    {
+      header: "Type",
       accessor: "missionType",
       render: (row) => (
         <span className="px-2 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] font-black uppercase tracking-widest text-accent">
@@ -254,35 +288,69 @@ const Missions = () => {
           </div>
         ) : selectedMission && (
           <div className="space-y-6">
-             <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-white/5 border border-white/10 rounded-2xl">
-                  <p className="text-[8px] font-black text-muted uppercase">Status</p>
-                  <p className="text-sm font-bold text-accent uppercase italic">{selectedMission.status}</p>
+            {/* Mission identity */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-4 bg-white/5 border border-white/10 rounded-2xl">
+                <p className="text-[8px] font-black text-muted uppercase">Mission ID</p>
+                <p className="text-sm font-bold text-accent uppercase italic">{selectedMission.id}</p>
+              </div>
+              <div className="p-4 bg-white/5 border border-white/10 rounded-2xl">
+                <p className="text-[8px] font-black text-muted uppercase">Reference / Order ID</p>
+                <p className="text-sm font-bold text-white italic">{selectedMission.orderId || '—'}</p>
+              </div>
+            </div>
+
+            {/* Project details */}
+            {(() => {
+              const proj = getProject(selectedMission);
+              return proj ? (
+                <div className="p-4 bg-accent/5 border border-accent/20 rounded-2xl space-y-2">
+                  <p className="text-[8px] font-black text-accent uppercase tracking-widest">Linked Project</p>
+                  <p className="text-sm font-bold text-white">{proj.name || proj.title || 'Unnamed Project'}</p>
+                  {proj.description && <p className="text-xs text-secondary">{proj.description}</p>}
+                  <div className="flex items-center gap-4 mt-1">
+                    <span className="text-[9px] text-muted uppercase font-black">ID: <span className="text-accent">#{proj.id}</span></span>
+                    {proj.status && <span className="text-[9px] text-muted uppercase font-black">Status: <span className="text-white">{proj.status}</span></span>}
+                  </div>
                 </div>
+              ) : (
                 <div className="p-4 bg-white/5 border border-white/10 rounded-2xl">
-                  <p className="text-[8px] font-black text-muted uppercase">Launch Date</p>
-                  <p className="text-sm font-bold text-white italic">{selectedMission.date}</p>
+                  <p className="text-[8px] font-black text-muted uppercase mb-1">Linked Project</p>
+                  <p className="text-xs text-muted italic">No project linked to this mission.</p>
                 </div>
-             </div>
-             <div className="p-4 bg-white/5 border border-white/10 rounded-2xl">
-                <p className="text-[8px] font-black text-muted uppercase mb-2">Tactical Intelligence</p>
-                <p className="text-xs text-secondary italic">{selectedMission.notes || 'No mission logs recorded.'}</p>
-             </div>
-             
-             <div className="flex gap-3">
-                <button 
-                  onClick={() => handleUpdateStatus('completed')}
-                  className="flex-1 py-3 bg-success/20 text-success border border-success/30 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-success hover:text-white transition-all"
-                >
-                  Finalize Mission
-                </button>
-                <button 
-                  onClick={() => handleUpdateStatus('failed')}
-                  className="flex-1 py-3 bg-danger/20 text-danger border border-danger/30 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-danger hover:text-white transition-all"
-                >
-                  Abort Mission
-                </button>
-             </div>
+              );
+            })()}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-4 bg-white/5 border border-white/10 rounded-2xl">
+                <p className="text-[8px] font-black text-muted uppercase">Status</p>
+                <p className="text-sm font-bold text-accent uppercase italic">{selectedMission.status}</p>
+              </div>
+              <div className="p-4 bg-white/5 border border-white/10 rounded-2xl">
+                <p className="text-[8px] font-black text-muted uppercase">Launch Date</p>
+                <p className="text-sm font-bold text-white italic">{selectedMission.date}</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-white/5 border border-white/10 rounded-2xl">
+              <p className="text-[8px] font-black text-muted uppercase mb-2">Mission Notes</p>
+              <p className="text-xs text-secondary italic">{selectedMission.notes || 'No mission logs recorded.'}</p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleUpdateStatus('completed')}
+                className="flex-1 py-3 bg-success/20 text-success border border-success/30 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-success hover:text-white transition-all"
+              >
+                Finalize Mission
+              </button>
+              <button
+                onClick={() => handleUpdateStatus('failed')}
+                className="flex-1 py-3 bg-danger/20 text-danger border border-danger/30 rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-danger hover:text-white transition-all"
+              >
+                Abort Mission
+              </button>
+            </div>
           </div>
         )}
       </Modal>

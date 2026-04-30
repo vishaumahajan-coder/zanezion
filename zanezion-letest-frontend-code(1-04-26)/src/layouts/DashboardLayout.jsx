@@ -23,10 +23,10 @@ const DashboardLayout = () => {
 
       <Sidebar isOpen={isSidebarOpen} toggleSidebar={toggleSidebar} role={role} />
 
-      <div className="transition-all duration-300 lg:pl-72">
+      <div className="transition-all duration-300 lg:pl-72 min-w-0 w-full box-border">
         <Topbar toggleSidebar={toggleSidebar} role={role} />
 
-        <main className="p-4 lg:p-8 max-w-[1600px] mx-auto animate-fade-in">
+        <main className="w-full min-w-0 max-w-[1600px] mx-auto p-4 lg:p-8 animate-fade-in overflow-x-hidden box-border">
           <Outlet />
         </main>
       </div>

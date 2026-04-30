@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useSearchParams, useLocation } from 'react-router-dom';
 import DashboardLayout from './layouts/DashboardLayout';
 
 // Base Dashboards
@@ -68,10 +68,11 @@ const SupportDashboard = lazy(() => import('./pages/Admin/SupportDashboard'));
 const Chauffeur = lazy(() => import('./pages/Common/Chauffeur'));
 const Audits = lazy(() => import('./pages/Common/Audits'));
 const StaffSignup = lazy(() => import('./pages/Common/StaffSignup'));
+const Signup = lazy(() => import('./pages/Common/Signup'));
 const LeaveManagement = lazy(() => import('./pages/Admin/LeaveManagement'));
 
 import { GlobalDataProvider } from './context/GlobalDataContext';
-import { normalizeRole } from './utils/authUtils';
+import { normalizeRole, menuPathGrantsAccess } from './utils/authUtils';
 
 const LoadingFallback = () => (
   <div className="min-h-screen bg-background flex items-center justify-center">
@@ -83,20 +84,25 @@ const LoadingFallback = () => (
 );
 
 const RoleProtectedRoute = ({ role, allowedRoles, children }) => {
-  // Verify token still exists before allowing route access
+  const location = useLocation();
   if (!localStorage.getItem('token') || !localStorage.getItem('userRole')) {
     return <Navigate to="/login" replace />;
   }
-  // Allow if role is in hardcoded list
+  // Company admin: full portal access (sidebar fixed); staff / others use allowedRoles + menuPermissions
+  if (role === 'admin') {
+    return children;
+  }
   if (allowedRoles.includes(role)) {
     return children;
   }
-  // Also allow if DB menu permissions grant can_view for this path
   try {
     const perms = JSON.parse(localStorage.getItem('menuPermissions') || '[]');
     if (perms.length > 0) {
-      const currentPath = window.location.pathname;
-      const hasPermission = perms.some(p => p.can_view && p.path && currentPath.startsWith(p.path) && p.path !== '/dashboard');
+      const hasPermission = perms.some(p =>
+        p.can_view &&
+        p.path &&
+        menuPathGrantsAccess(location.pathname, location.search, p.path)
+      );
       if (hasPermission) return children;
     }
   } catch (e) { /* ignore parse errors */ }
@@ -193,6 +199,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login onLogin={handleLogin} />} />
+            <Route path="/signup" element={<Signup />} />
             <Route path="/staff-signup" element={<StaffSignup />} />
 
             <Route
@@ -207,12 +214,12 @@ function App() {
               <Route index element={<DashboardSelector role={auth.role} />} />
 
               <Route path="clients" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'operations', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'operations', 'client', 'admin', 'saas_client']}>
                   <Clients />
                 </RoleProtectedRoute>
               } />
               <Route path="vendors" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'procurement', 'operations', 'inventory']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client', 'procurement', 'operations', 'inventory']}>
                   <Vendors />
                 </RoleProtectedRoute>
               } />
@@ -222,22 +229,22 @@ function App() {
                 </RoleProtectedRoute>
               } />
               <Route path="inventory" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'inventory', 'concierge', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'inventory', 'concierge', 'client', 'admin', 'saas_client']}>
                   <Inventory />
                 </RoleProtectedRoute>
               } />
               <Route path="reports" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client']}>
                   <Reports />
                 </RoleProtectedRoute>
               } />
               <Route path="users" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client', 'operations', 'procurement', 'logistics', 'inventory', 'concierge']}>
                   <Users />
                 </RoleProtectedRoute>
               } />
               <Route path="staff-audits" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client']}>
                   <StaffAudits />
                 </RoleProtectedRoute>
               } />
@@ -248,23 +255,23 @@ function App() {
               } />
               <Route path="profile" element={<Profile />} />
               <Route path="roles-permissions" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client']}>
                   <RolesPermissions />
                 </RoleProtectedRoute>
               } />
               <Route path="payroll" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client', 'procurement']}>
                   <Payroll />
                 </RoleProtectedRoute>
               } />
               <Route path="leave" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client', 'procurement']}>
                   <LeaveManagement />
                 </RoleProtectedRoute>
               } />
               <Route path="invoices" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client', 'operations', 'procurement', 'logistics', 'inventory', 'concierge', 'staff', 'customer']}>
-                  {auth.role === 'customer' ? <ClientInvoices /> : <Invoices />}
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client', 'operations', 'procurement', 'logistics', 'inventory', 'concierge', 'staff']}>
+                  <Invoices />
                 </RoleProtectedRoute>
               } />
               <Route path="plans" element={
@@ -273,12 +280,12 @@ function App() {
                 </RoleProtectedRoute>
               } />
               <Route path="support-tickets" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client']}>
                   <SupportDashboard />
                 </RoleProtectedRoute>
               } />
               <Route path="saas-clients" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client']}>
                   <SaaSClients />
                 </RoleProtectedRoute>
               } />
@@ -290,24 +297,24 @@ function App() {
                 </RoleProtectedRoute>
               } />
               <Route path="deliveries" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'operations', 'logistics', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'operations', 'logistics', 'client', 'admin', 'saas_client']}>
                   <Deliveries />
                 </RoleProtectedRoute>
               } />
               <Route path="missions" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'operations', 'logistics', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'operations', 'logistics', 'client', 'admin', 'saas_client']}>
                   <Missions />
                 </RoleProtectedRoute>
               } />
 
               {/* Procurement Specific Routes */}
               <Route path="purchase-requests" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client']}>
                   <PurchaseRequests />
                 </RoleProtectedRoute>
               } />
               <Route path="quotes" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client']}>
                   <Quotes />
                 </RoleProtectedRoute>
               } />
@@ -317,14 +324,14 @@ function App() {
                 </RoleProtectedRoute>
               } />
               <Route path="purchase-orders" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client']}>
                   <PurchaseOrders />
                 </RoleProtectedRoute>
               } />
 
               {/* Logistics Specific Routes */}
               <Route path="fleet" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'logistics']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'logistics', 'client', 'admin', 'saas_client']}>
                   <Fleet />
                 </RoleProtectedRoute>
               } />
@@ -346,7 +353,7 @@ function App() {
 
               {/* Inventory Role Specific */}
               <Route path="warehouses" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'inventory']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'inventory', 'client', 'admin', 'saas_client']}>
                   <Warehouses />
                 </RoleProtectedRoute>
               } />
@@ -364,12 +371,12 @@ function App() {
                 </RoleProtectedRoute>
               } />
               <Route path="guest-requests" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client', 'customer']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client']}>
                   <GuestRequests />
                 </RoleProtectedRoute>
               } />
               <Route path="luxury-items" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client']}>
                   <LuxuryItems />
                 </RoleProtectedRoute>
               } />
@@ -394,7 +401,7 @@ function App() {
 
               {/* Client Portal Specific */}
               <Route path="customer-list" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin', 'saas_client']}>
                   <ClientOrders />
                 </RoleProtectedRoute>
               } />
@@ -405,7 +412,7 @@ function App() {
               } />
               <Route path="chauffeur-service" element={<Navigate to="/dashboard/chauffeur" replace />} />
               <Route path="client-events" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'saas_client', 'admin', 'customer']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'saas_client', 'admin']}>
                   <ClientEvents />
                 </RoleProtectedRoute>
               } />
@@ -415,18 +422,18 @@ function App() {
                 </RoleProtectedRoute>
               } />
               <Route path="track-delivery" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin', 'customer']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin', 'saas_client', 'customer']}>
                   <ClientTracking />
                 </RoleProtectedRoute>
               } />
               <Route path="client-inventory" element={<Navigate to="/dashboard/inventory" replace />} />
               <Route path="support" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin', 'saas_client', 'customer']}>
                   <ClientSupport />
                 </RoleProtectedRoute>
               } />
               <Route path="store" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin', 'customer']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin', 'saas_client', 'customer']}>
                   <ClientStore />
                 </RoleProtectedRoute>
               } />

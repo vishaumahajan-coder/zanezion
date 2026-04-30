@@ -37,7 +37,7 @@ const Clients = () => {
         await fetchClients({ search: debounceSearch, client_type: 'Personal' });
       } else {
         // Super Admin: show filtered by type
-        const filterParam = clientTypeFilter === 'Personal' ? 'Personal' : (clientTypeFilter === 'SaaS' ? 'SaaS' : undefined);
+        const filterParam = clientTypeFilter === 'Business' ? 'Business' : (clientTypeFilter === 'SaaS' ? 'SaaS' : undefined);
         
         if (clientTypeFilter === 'Website') {
           if (fetchSubscriptionRequests) await fetchSubscriptionRequests();
@@ -362,11 +362,11 @@ const Clients = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-black tracking-tighter text-white italic uppercase">
-            {isAdminRole ? 'Customers' : (clientTypeFilter === 'SaaS' ? 'SaaS Clients' : (clientTypeFilter === 'Personal' ? 'Personal Clients' : 'Website Signups'))}
+            {isAdminRole ? 'Customers' : (clientTypeFilter === 'SaaS' ? 'SaaS Clients' : (clientTypeFilter === 'Business' ? 'Business Clients' : 'Website Signups'))}
           </h1>
           <p className="text-secondary text-xs mt-1 font-black uppercase tracking-[0.2em] opacity-70 italic">
             {isAdminRole ? 'Manage your customers' : (clientTypeFilter === 'SaaS' ? 'Manage your registered SaaS clients' :
-             clientTypeFilter === 'Personal' ? 'Free subscription clients - same features, no billing' : 'Review and approve incoming portal requests')}
+             clientTypeFilter === 'Business' ? 'Business accounts signed up via website — review & approve' : 'Review and approve incoming portal requests')}
           </p>
         </div>
         <div className="flex gap-3">
@@ -376,7 +376,7 @@ const Clients = () => {
           {!isAdminRole && clientTypeFilter !== 'Website' && (
             <button onClick={handleAdd} className="btn-primary group flex items-center gap-3 px-8 shadow-xl shadow-accent/20">
               <Plus size={18} className="group-hover:rotate-90 transition-transform duration-300" />
-              <span>Add {clientTypeFilter === 'Personal' ? 'Personal' : 'SaaS'} Client</span>
+              <span>Add {clientTypeFilter === 'Business' ? 'Business' : 'SaaS'} Client</span>
             </button>
           )}
           {isAdminRole && (
@@ -393,7 +393,7 @@ const Clients = () => {
         <div className="flex gap-2">
           {[
             { label: 'SaaS Clients', value: 'SaaS' },
-            { label: 'Personal Clients', value: 'Personal' },
+            { label: 'Business Clients', value: 'Business' },
             { label: 'Website Clients', value: 'Website' },
           ].map(tab => (
             <button
@@ -465,8 +465,8 @@ const Clients = () => {
                   </>
                 ) : (
                   <>
-                    {clientTypeFilter !== 'Personal' && <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest">Plan</th>}
-                    {clientTypeFilter === 'Personal' && <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest">Orders</th>}
+                    {clientTypeFilter !== 'Business' && <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest">Plan</th>}
+                    {clientTypeFilter === 'Business' && <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest">License</th>}
                     {clientTypeFilter === 'Website' && <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest">Payment Status</th>}
                     <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest">Phone</th>
                     <th className="p-6 text-[10px] font-black text-muted uppercase tracking-widest">Source</th>
@@ -518,14 +518,16 @@ const Clients = () => {
                       </>
                     ) : (
                       <>
-                        {clientTypeFilter !== 'Personal' && (
+                        {clientTypeFilter !== 'Business' && (
                           <td className="p-6">
                             <span className="text-sm font-bold text-accent">{client.plan || 'N/A'}</span>
                           </td>
                         )}
-                        {clientTypeFilter === 'Personal' && (
+                        {clientTypeFilter === 'Business' && (
                           <td className="p-6">
-                            <span className="text-sm font-black text-accent italic">{client.total_orders || 0}</span>
+                            <span className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest ${client.business_license_url ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'}`}>
+                              {client.business_license_url ? 'Uploaded' : 'Pending'}
+                            </span>
                           </td>
                         )}
                         {clientTypeFilter === 'Website' && (

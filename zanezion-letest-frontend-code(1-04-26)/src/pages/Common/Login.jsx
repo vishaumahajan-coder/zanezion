@@ -44,8 +44,11 @@ const Login = ({ onLogin }) => {
     setError(null);
 
     try {
-      // Real API login
-      const res = await api.post('/auth/login', { email, password });
+      // Real API login (trim email — trailing space breaks lookup)
+      const res = await api.post('/auth/login', {
+        email: String(email || '').trim(),
+        password,
+      });
 
       if (res.data?.success) {
         const { token, user, menuPermissions: perms } = res.data.data;
@@ -75,7 +78,18 @@ const Login = ({ onLogin }) => {
       }
     } catch (err) {
       console.error('Login error:', err);
-      const msg = err.response?.data?.message || 'Login failed. Check your credentials.';
+      const status = err.response?.status;
+      const body = err.response?.data;
+      const validatorMsg = Array.isArray(body?.errors)
+        ? body.errors.map((e) => e.msg || e.message || String(e)).filter(Boolean).join(' ')
+        : '';
+      const msg =
+        (typeof body?.message === 'string' && body.message) ||
+        (typeof body?.error === 'string' && body.error) ||
+        validatorMsg ||
+        (status === 401
+          ? 'Invalid email or password (401). The server rejected credentials — password mismatch, inactive account, or user not visible to this app.'
+          : 'Login failed. Check your credentials.');
       setError(msg);
     } finally {
       setLoading(false);
@@ -407,7 +421,10 @@ const Login = ({ onLogin }) => {
           <div className="pt-4 text-center space-y-2">
             <p className="text-[10px] text-muted font-bold uppercase tracking-[0.2em]">ZaneZion Concierge v2.0.5</p>
             <p className="text-[10px] font-bold uppercase tracking-widest text-secondary">
-              Need to join? <Link to="/staff-signup" className="text-accent underline decoration-accent/20 underline-offset-4 hover:text-white transition-colors">Sign up here</Link>
+              New user?{' '}
+              <Link to="/signup" className="text-accent underline decoration-accent/20 underline-offset-4 hover:text-white transition-colors">Create account</Link>
+              <span className="mx-2 text-white/20">•</span>
+              <Link to="/staff-signup" className="text-muted hover:text-white transition-colors">Staff signup</Link>
             </p>
           </div>
         </div>

@@ -18,6 +18,7 @@ const GuestRequests = () => {
 
     const userRole = (currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
     const isCustomer = ['customer', 'saas_client'].includes(userRole);
+    const isConciergeOrAdmin = ['concierge', 'admin', 'super_admin', 'superadmin'].includes(userRole);
 
     // Customer: backend already filters by company_id, show all. Admin/concierge: show all too.
     const filteredRequests = guestRequests.filter(req =>
@@ -101,7 +102,7 @@ const GuestRequests = () => {
                         />
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
                     </div>
-                    {(isCustomer || hasMenuPermission('Guest Requests', 'can_add')) && (
+                    {(isCustomer || isConciergeOrAdmin || hasMenuPermission('Guest Requests', 'can_add')) && (
                         <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
                             <Plus size={16} /> Log Request
                         </button>

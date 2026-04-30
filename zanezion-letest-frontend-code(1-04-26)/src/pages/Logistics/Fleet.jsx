@@ -9,17 +9,18 @@ import {
 import { useData } from '../../context/GlobalDataContext';
 
 const Fleet = () => {
-  const { fleet, addFleet, updateFleet, deleteFleet, deliveries, dispatchVehicle, fetchFleet, fetchDeliveries, hasMenuPermission } = useData();
+  const { fleet, routes, addFleet, updateFleet, deleteFleet, deliveries, dispatchVehicle, fetchFleet, fetchDeliveries, fetchRoutes, hasMenuPermission } = useData();
 
   React.useEffect(() => {
     fetchFleet();
     fetchDeliveries();
-  }, [fetchFleet, fetchDeliveries]);
+    fetchRoutes();
+  }, [fetchFleet, fetchDeliveries, fetchRoutes]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('view');
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState({ id: '', type: 'Luxury Truck', model: '', fuel: '100%', status: 'Active', capacity: '' });
+  const [formData, setFormData] = useState({ id: '', type: 'Luxury Truck', model: '', fuel: '100%', status: 'Active', capacity: '', routeId: '', markUrgent: false });
 
   const filteredFleet = fleet.filter(asset =>
     asset.model?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -29,7 +30,7 @@ const Fleet = () => {
   const handleAction = (type, vehicle) => {
     setSelectedVehicle(vehicle);
     setModalType(type);
-    setFormData(vehicle.id ? { ...vehicle } : { id: '', type: 'Luxury Truck', model: '', fuel: '100%', status: 'Active', capacity: '' });
+    setFormData(vehicle.id ? { ...vehicle } : { id: '', type: 'Luxury Truck', model: '', fuel: '100%', status: 'Active', capacity: '', routeId: '', markUrgent: false });
     setIsModalOpen(true);
   };
 
@@ -215,6 +216,32 @@ const Fleet = () => {
                     />
                   </div>
                   <div className="space-y-2 sm:col-span-2">
+                    <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Dispatch Route</label>
+                    <select
+                      className="w-full bg-white/[0.02] border border-white/10 rounded-2xl px-4 py-4 text-xs sm:text-sm focus:border-accent outline-none font-black text-white"
+                      value={formData.routeId || ''}
+                      onChange={(e) => setFormData({ ...formData, routeId: e.target.value })}
+                    >
+                      <option value="">Select route...</option>
+                      {(routes || []).map((r) => (
+                        <option key={r.id} value={r.id} className="bg-sidebar">
+                          {r.name} ({r.dist || 'N/A'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <label className="inline-flex items-center gap-3 text-[10px] font-black text-danger uppercase tracking-widest cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!!formData.markUrgent}
+                        onChange={(e) => setFormData({ ...formData, markUrgent: e.target.checked })}
+                        className="w-4 h-4 accent-red-500"
+                      />
+                      Mark as urgent for admin monitoring
+                    </label>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
                     <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Mission Manifest Details</label>
                     <textarea
                       className="w-full bg-white/[0.02] border border-white/10 rounded-2xl px-4 py-4 text-xs sm:text-sm focus:border-accent outline-none h-28 italic font-medium"
@@ -230,10 +257,14 @@ const Fleet = () => {
                     onClick={() => {
                       dispatchVehicle({
                         id: selectedVehicle.id,
+                        db_id: selectedVehicle.db_id,
                         deliveryId: formData.deliveryId,
+                        delivery_db_id: deliveries.find((d) => String(d.id) === String(formData.deliveryId))?.db_id,
                         driver: formData.driver,
                         mission: formData.mission,
-                        routeId: 1 // Default route or logic to select route
+                        routeId: formData.routeId ? parseInt(formData.routeId, 10) : null,
+                        routeName: routes.find((r) => String(r.id) === String(formData.routeId))?.name || '',
+                        markUrgent: !!formData.markUrgent
                       });
                       setIsModalOpen(false);
                     }}

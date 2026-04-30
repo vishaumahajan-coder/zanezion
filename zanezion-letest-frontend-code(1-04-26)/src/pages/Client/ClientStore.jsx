@@ -69,17 +69,28 @@ const ClientStore = () => {
         }
 
         const isBespoke = activeTab === 'sheet';
+
+        // Require delivery address for catalog checkout
+        const deliveryAddress = isBespoke ? destination : catalogDeliveryAddress;
+        if (!deliveryAddress || !deliveryAddress.trim()) {
+            swalWarning('Address Required', 'Please enter a delivery address before confirming.');
+            return;
+        }
+
         const orderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}`;
 
         const orderData = {
             id: orderId,
             client: myClient?.name || currentUser?.name || 'Client',
-            clientId: myClient?.id || currentUser.clientId || 1,
+            clientId: myClient?.id || currentUser?.clientId || 1,
+            customerName: currentUser?.name || 'Customer',
+            customerEmail: currentUser?.email || '',
             items: items,
             total: cartTotal,
             status: 'Pending Review',
             deliveryType: deliveryMode,
-            location: isBespoke ? destination : (currentUser.location || 'Client Hub'),
+            location: deliveryAddress.trim(),
+            deliveryAddress: deliveryAddress.trim(),
             date: new Date().toISOString().split('T')[0],
             createdAt: new Date().toISOString(),
             orderType: isBespoke ? 'Bespoke Manifest' : 'Marketplace Protocol'
@@ -94,6 +105,7 @@ const ClientStore = () => {
         navigate('/dashboard/client-orders');
     };
 
+    const [catalogDeliveryAddress, setCatalogDeliveryAddress] = useState(currentUser?.location || '');
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     return (
@@ -456,6 +468,20 @@ const ClientStore = () => {
                                             </button>
                                         ))}
                                     </div>
+                                </div>
+
+                                {/* Delivery address required for catalog orders */}
+                                <div className="space-y-2">
+                                    <label className="text-[9px] font-black text-accent uppercase tracking-widest ml-1 flex items-center gap-2">
+                                        <MapPin size={12} /> Delivery Address *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="Enter delivery address..."
+                                        value={catalogDeliveryAddress}
+                                        onChange={(e) => setCatalogDeliveryAddress(e.target.value)}
+                                        className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40"
+                                    />
                                 </div>
 
                                 <div className="flex justify-between items-center bg-white/[0.03] p-5 rounded-3xl border border-white/5 shadow-inner">

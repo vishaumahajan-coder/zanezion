@@ -9,9 +9,10 @@ import {
 } from 'lucide-react';
 
 import { useData } from '../../context/GlobalDataContext';
+import { normalizeRole } from '../../utils/authUtils';
 
 const Tracking = () => {
-  const { tracking = [], fetchTracking, addTracking, updateTracking, deleteTracking, hasMenuPermission } = useData();
+  const { tracking = [], fetchTracking, addTracking, updateTracking, deleteTracking, hasMenuPermission, currentUser } = useData();
 
   useEffect(() => {
     if (fetchTracking) fetchTracking();
@@ -72,6 +73,17 @@ const Tracking = () => {
           </h1>
           <p className="text-secondary text-[10px] md:text-xs mt-1 font-black uppercase tracking-[0.2em] opacity-70 leading-relaxed">Real-time telemetry and positional data for all active assets.</p>
         </div>
+        {(hasMenuPermission('Tracking', 'can_add') || 
+          normalizeRole(currentUser?.role) === 'procurement' || 
+          (localStorage.getItem('userRole') || '').toLowerCase().includes('procurement') ||
+          (localStorage.getItem('userRole') || '').toLowerCase().includes('admin')) && (
+          <button
+            className="btn-primary flex items-center justify-center gap-3 py-4 px-8 text-[10px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-accent/10 w-full lg:w-auto"
+            onClick={() => handleAction('add', {})}
+          >
+            <Plus size={16} /> Initiate Asset Sync
+          </button>
+        )}
       </div>
 
       {/* Stat Cards */}
@@ -119,8 +131,8 @@ const Tracking = () => {
           onView={(item) => handleAction('view', item)}
           onEdit={(item) => handleAction('edit', item)}
           onDelete={(item) => handleAction('delete', item)}
-          canEdit={hasMenuPermission('Deliveries', 'can_edit')}
-          canDelete={hasMenuPermission('Deliveries', 'can_delete')}
+          canEdit={hasMenuPermission('Tracking', 'can_edit') || normalizeRole(currentUser?.role) === 'procurement'}
+          canDelete={hasMenuPermission('Tracking', 'can_delete') || normalizeRole(currentUser?.role) === 'procurement'}
         />
       </div>
 

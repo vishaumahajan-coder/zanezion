@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import Modal from './Modal';
 import { Package, Hash, Warehouse, Tag, Activity } from 'lucide-react';
+import { useData } from '../context/GlobalDataContext';
 
 const StockModal = ({ isOpen, onClose, onSave }) => {
+  const { warehouses } = useData();
+  const defaultWh = (warehouses && warehouses.length > 0) ? warehouses[0].name : 'Warehouse A';
+
   const [formData, setFormData] = useState({
     productName: '',
     quantity: '',
-    warehouseLocation: 'Warehouse A',
+    warehouseLocation: defaultWh,
+    warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
     category: '',
     status: 'Stable'
   });
@@ -16,12 +21,13 @@ const StockModal = ({ isOpen, onClose, onSave }) => {
       setFormData({
         productName: '',
         quantity: '',
-        warehouseLocation: 'Warehouse A',
+        warehouseLocation: defaultWh,
+        warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
         category: '',
         status: 'Stable'
       });
     }
-  }, [isOpen]);
+  }, [isOpen, defaultWh, warehouses]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -70,13 +76,19 @@ const StockModal = ({ isOpen, onClose, onSave }) => {
               <Warehouse className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14} />
               <select
                 value={formData.warehouseLocation}
-                onChange={(e) => setFormData({ ...formData, warehouseLocation: e.target.value })}
-                className="w-full bg-background border border-border rounded-lg pl-10 pr-4 py-2 text-sm focus:border-accent outline-none appearance-none"
+                onChange={(e) => {
+                  const name = e.target.value;
+                  const wh = warehouses.find(w => w.name === name);
+                  setFormData({ ...formData, warehouseLocation: name, warehouseId: wh ? wh.id : null });
+                }}
+                className="w-full bg-background border border-border rounded-lg pl-10 pr-4 py-2 text-sm focus:border-accent outline-none appearance-none font-bold"
                 required
               >
-                <option value="Warehouse A">Warehouse A</option>
-                <option value="Warehouse B">Warehouse B</option>
-                <option value="Warehouse C">Warehouse C</option>
+                {warehouses.length > 0 ? (
+                  warehouses.map(wh => <option key={wh.id} value={wh.name}>{wh.name}</option>)
+                ) : (
+                  <option value="General Storage">General Storage</option>
+                )}
               </select>
             </div>
           </div>

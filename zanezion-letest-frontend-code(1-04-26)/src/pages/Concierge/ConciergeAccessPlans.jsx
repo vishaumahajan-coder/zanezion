@@ -4,7 +4,9 @@ import { useData } from '../../context/GlobalDataContext';
 import Modal from '../../components/Modal';
 
 const ConciergeAccessPlans = () => {
-    const { accessPlans, addPlan, updatePlan, deletePlan, fetchTickets } = useData();
+    const { accessPlans, addPlan, updatePlan, deletePlan, fetchTickets, currentUser } = useData();
+    const role = (currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
+    const canManagePlans = ['super_admin', 'superadmin', 'admin'].includes(role);
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [modalType, setModalType] = useState('add'); // 'add', 'edit', 'delete'
@@ -70,11 +72,13 @@ const ConciergeAccessPlans = () => {
                     <h1 className="text-3xl font-bold tracking-tight text-white italic">VIP Access Setup</h1>
                     <p className="text-secondary mt-1 uppercase text-[10px] font-black tracking-widest opacity-60">Manage luxury venue access and VIP tier allocations for clients.</p>
                 </div>
-                <div className="flex gap-3">
-                    <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add')}>
-                        <Plus size={16} /> New VIP Access
-                    </button>
-                </div>
+                {canManagePlans && (
+                    <div className="flex gap-3">
+                        <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add')}>
+                            <Plus size={16} /> New VIP Access
+                        </button>
+                    </div>
+                )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -131,14 +135,16 @@ const ConciergeAccessPlans = () => {
                                     <td className="p-4 text-secondary italic">{plan.tier}</td>
                                     <td className="p-4 text-secondary font-mono">${plan.price}{plan.period}</td>
                                     <td className="p-4 text-right">
-                                        <div className="flex justify-end gap-2 transition-opacity">
-                                            <button onClick={() => handleAction('edit', plan)} className="p-2 hover:bg-accent hover:text-black rounded-lg transition-colors border border-white/5 bg-white/5">
-                                                <Edit2 size={14} />
-                                            </button>
-                                            <button onClick={() => handleAction('delete', plan)} className="p-2 hover:bg-danger hover:text-white rounded-lg transition-colors border border-white/5 bg-white/5">
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
+                                        {canManagePlans && (
+                                            <div className="flex justify-end gap-2 transition-opacity">
+                                                <button onClick={() => handleAction('edit', plan)} className="p-2 hover:bg-accent hover:text-black rounded-lg transition-colors border border-white/5 bg-white/5">
+                                                    <Edit2 size={14} />
+                                                </button>
+                                                <button onClick={() => handleAction('delete', plan)} className="p-2 hover:bg-danger hover:text-white rounded-lg transition-colors border border-white/5 bg-white/5">
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        )}
                                     </td>
                                 </tr>
                             ))}

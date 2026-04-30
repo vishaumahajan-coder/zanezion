@@ -4,9 +4,10 @@ import Modal from '../../components/Modal';
 import OrderModal from '../../components/OrderModal';
 import { useData } from '../../context/GlobalDataContext';
 import { Store, Star, Phone, Mail, Plus, ShieldCheck } from 'lucide-react';
+import { normalizeRole } from '../../utils/authUtils';
 
 const Vendors = () => {
-  const { vendors, addVendor, updateVendor, deleteVendor, addOrder, fetchVendors, hasMenuPermission } = useData();
+  const { vendors, addVendor, updateVendor, deleteVendor, addOrder, fetchVendors, hasMenuPermission, currentUser } = useData();
 
   React.useEffect(() => {
     fetchVendors();
@@ -35,18 +36,45 @@ const Vendors = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = () => {
-    if (modalType === 'add') {
-      addVendor(formData);
-    } else if (modalType === 'edit') {
-      updateVendor({ ...selectedVendor, ...formData });
-    }
-    setIsModalOpen(false);
+  const vendorSaveErrorMessage = (error) => {
+    const d = error?.response?.data;
+    if (typeof d?.message === 'string') return d.message;
+    if (d?.message && typeof d.message === 'object') return JSON.stringify(d.message);
+    if (Array.isArray(d?.errors)) return d.errors.map((e) => (typeof e === 'string' ? e : e?.msg || JSON.stringify(e))).join(' ');
+    return error?.message || 'Failed to save vendor.';
   };
 
-  const handleDelete = () => {
-    deleteVendor(selectedVendor.id);
-    setIsModalOpen(false);
+  const handleSave = async () => {
+    if (modalType === 'add') {
+      if (!String(formData.name || '').trim()) {
+        window.alert('Please enter a vendor name.');
+        return;
+      }
+      try {
+        await addVendor(formData);
+        setIsModalOpen(false);
+      } catch (e) {
+        window.alert(vendorSaveErrorMessage(e));
+      }
+      return;
+    }
+    if (modalType === 'edit') {
+      try {
+        await updateVendor({ ...selectedVendor, ...formData });
+        setIsModalOpen(false);
+      } catch (e) {
+        window.alert(vendorSaveErrorMessage(e));
+      }
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      await deleteVendor(selectedVendor.id);
+      setIsModalOpen(false);
+    } catch (e) {
+      window.alert(vendorSaveErrorMessage(e));
+    }
   };
 
   const handleDirectOrder = (vendorName) => {
@@ -112,7 +140,7 @@ const Vendors = () => {
             />
             <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
           </div>
-          {hasMenuPermission('Vendors', 'can_add') && (
+          {(hasMenuPermission('Vendors', 'can_add') || normalizeRole(currentUser?.role) === 'procurement') && (
             <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
               <Plus size={16} /> Add Vendor
             </button>
@@ -231,17 +259,19 @@ const Vendors = () => {
                     disabled={modalType === 'view'}
                   />
                 </div>
+                {modalType !== 'add' && (
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Vendor ID</label>
                   <input
                     type="text"
-                    value={formData.id || ''}
+                    value={formData.id ?? ''}
                     onChange={(e) => setFormData({ ...formData, id: e.target.value })}
                     className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
-                    disabled={modalType === 'view'}
-                    placeholder="VND-XXXX"
+                    disabled={modalType === 'view' || modalType === 'edit'}
+                    placeholder="Database ID"
                   />
                 </div>
+                )}
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Category</label>
                   <select

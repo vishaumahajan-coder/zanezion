@@ -1,181 +1,269 @@
-import React, { useState } from 'react';
-import { swalSuccess, swalError, swalWarning, swalInfo, swalConfirm, swalCredentials, swalCopied } from '../../utils/swal';
+import React, { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import KpiCard from '../../components/KpiCard';
-import ProgressBar from '../../components/ProgressBar';
 import StatusBadge from '../../components/StatusBadge';
 import StockModal from '../../components/StockModal';
 import {
-  Package, AlertTriangle, Plus, History,
-  Warehouse, Truck, BarChart3, ClipboardList,
-  ArrowRight, Box
+  Package, AlertTriangle, Plus, ClipboardList,
+  Warehouse, ArrowRight, Box, Store,
 } from 'lucide-react';
 
 import { useData } from '../../context/GlobalDataContext';
 
+/** Parse qty whether API returns number or string like "50 units". */
+function parseQty(value) {
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const n = parseInt(String(value).replace(/[^\d.-]/g, ''), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
 const InventoryDashboardRole = () => {
-  const { inventory, addInventory, updateInventory, deleteInventory, fetchInventory, inventoryAlerts, fetchInventoryAlerts } = useData();
-  
+  const {
+    inventory,
+    addInventory,
+    fetchInventory,
+    inventoryAlerts,
+    fetchInventoryAlerts,
+    warehouses,
+    fetchWarehouses,
+  } = useData();
+
   React.useEffect(() => {
     fetchInventory();
     fetchInventoryAlerts();
-  }, [fetchInventory, fetchInventoryAlerts]);
+    fetchWarehouses();
+  }, [fetchInventory, fetchInventoryAlerts, fetchWarehouses]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const handleSaveStock = (formData) => {
+    const qtyNum = parseQty(formData.quantity);
+    const defaultWhName = warehouses.length > 0 ? warehouses[0].name : '';
+    
+    // Use warehouseId directly if provided by the modal, otherwise fallback to lookup
+    const whId = formData.warehouseId || warehouses.find(
+      (w) => (w.name || w.warehouse_name) === (formData.warehouseLocation || defaultWhName)
+    )?.id;
+
     addInventory({
       name: formData.productName,
-      qty: "100 Units",
-      location: formData.location || "Warehouse A",
-      category: "Stock Entry",
-      status: formData.status
+      qty: qtyNum,
+      category: formData.category || 'Stock Entry',
+      price: 0,
+      warehouse_id: whId,
+      location: formData.warehouseLocation || defaultWhName,
+      inventoryType: 'Warehouse',
     });
     setIsModalOpen(false);
   };
 
-  const lowStockAlerts = (inventoryAlerts || []).map(alert => ({
-    item: alert.name,
-    count: alert.qty,
-    unit: 'Units',
-    type: alert.status === 'Critical' ? 'danger' : 'warning'
-  })).slice(0, 3);
+  const lowStockAlerts = useMemo(
+    () =>
+      (inventoryAlerts || []).map((alert) => ({
+        item: alert.name,
+        count: alert.qty,
+        unit: 'Units',
+        type: alert.status === 'Critical' ? 'danger' : 'warning',
+      })),
+    [inventoryAlerts],
+  );
 
-  const warehouseActivity = [
-    { action: 'Stock Added', item: 'Beluga Caviar', time: '10m ago', icon: Plus, color: 'text-success' },
-    { action: 'Stock Moved', item: 'Crystal Glassware', time: '1h ago', icon: Warehouse, color: 'text-info' },
-    { action: 'Stock Delivered', item: 'Champagne Case', time: '3h ago', icon: Truck, color: 'text-accent' },
-  ];
+  const totalSkus = inventory.length;
+  const totalUnitsOnHand = useMemo(
+    () => inventory.reduce((acc, row) => acc + parseQty(row.qty ?? row.quantity), 0),
+    [inventory],
+  );
+  const lowOrCriticalLines = useMemo(
+    () => inventory.filter((i) => ['Warning', 'Critical'].includes(String(i.status || ''))).length,
+    [inventory],
+  );
+  const dashboardAttentionCount = Math.max(
+    (inventoryAlerts || []).length,
+    lowOrCriticalLines,
+  );
+
+  const maxQtyDisplay = useMemo(() => {
+    const nums = inventory.map((i) => parseQty(i.qty ?? i.quantity));
+    const m = Math.max(1, ...nums);
+    return m;
+  }, [inventory]);
+
+  const topStockRows = useMemo(() => {
+    return [...inventory]
+      .sort((a, b) => parseQty(b.qty ?? b.quantity) - parseQty(a.qty ?? a.quantity))
+      .slice(0, 6);
+  }, [inventory]);
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-        <div>
+    <div className="space-y-8 w-full min-w-0 max-w-full overflow-x-hidden">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 min-w-0">
+        <div className="min-w-0">
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Inventory Hub</h1>
-          <p className="text-secondary text-xs md:text-sm mt-1">Warehouse management and precision stock distribution control.</p>
+          <p className="text-secondary text-xs md:text-sm mt-1">
+            Live stock counts, alerts, and warehouse coverage from your API data.
+          </p>
         </div>
-        <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
-          <button
+        <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto shrink-0">
+          <Link
+            to="/dashboard/inventory-alerts"
             className="btn-secondary flex-1 sm:flex-none flex items-center justify-center gap-2 text-[10px] sm:text-xs py-3 px-6"
-            onClick={() => swalInfo('Stock Audit', 'Scanners active. Verification in progress.')}
           >
-            <ClipboardList size={16} /> Run Audit
-          </button>
+            <ClipboardList size={16} /> Alerts &amp; thresholds
+          </Link>
           <button
+            type="button"
             className="btn-primary flex-1 sm:flex-none flex items-center justify-center gap-2 text-[10px] sm:text-xs py-3 px-6"
             onClick={() => setIsModalOpen(true)}
           >
-            <Plus size={16} /> New Stock Entry
+            <Plus size={16} /> New stock entry
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Total SKU" value="1,280" change="+12" type="increase" icon={Box} />
-        <KpiCard label="Low Stock Items" value="8" change="-2" type="decrease" icon={AlertTriangle} />
-        <KpiCard label="Warehouse Space" value="85%" change="Stable" type="neutral" icon={Warehouse} />
-        <KpiCard label="Movement (24h)" value="142" change="+15%" type="increase" icon={History} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 min-w-0">
+        <KpiCard label="SKU count" value={String(totalSkus)} icon={Box} compact type="neutral" />
+        <KpiCard label="Units on hand" value={totalUnitsOnHand.toLocaleString()} icon={Package} compact type="info" />
+        <KpiCard label="Needs attention" value={String(dashboardAttentionCount)} icon={AlertTriangle} compact type="neutral" />
+        <KpiCard label="Warehouses" value={String(warehouses?.length ?? 0)} icon={Store} compact type="neutral" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 glass-card p-6">
-          <h3 className="text-lg font-bold mb-6">Strategic Stock Levels</h3>
-          <div className="space-y-8">
-            {inventory.slice(0, 4).map((item, idx) => {
-              const stockPercentage = parseInt(item.qty) || 75; // Fallback or parsed value
-              return (
-                <div key={idx} className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-sm">{item.name}</span>
-                    <span className={`text-xs font-bold ${item.status === 'Critical' ? 'text-danger' : 'text-accent'}`}>{item.qty}</span>
-                  </div>
-                  <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-1000 ${item.status === 'Critical' ? 'bg-danger' : 'bg-accent'}`}
-                      style={{ width: `${stockPercentage > 100 ? 100 : stockPercentage}%` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 min-w-0">
+        <div className="lg:col-span-2 glass-card p-5 sm:p-6 min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+            <h3 className="text-lg font-bold">Highest stock lines</h3>
+            <Link
+              to="/dashboard/inventory"
+              className="text-xs font-bold text-accent hover:underline inline-flex items-center gap-1 shrink-0"
+            >
+              Full inventory <ArrowRight size={14} />
+            </Link>
           </div>
-          <button className="w-full mt-10 btn-secondary py-3 text-xs flex items-center justify-center gap-2">
-            View Expanded Inventory <ArrowRight size={14} />
-          </button>
+          {topStockRows.length === 0 ? (
+            <p className="text-secondary text-sm py-8 text-center">
+              No inventory rows yet. Add stock or sync your catalog from the Inventory page.
+            </p>
+          ) : (
+            <div className="space-y-6">
+              {topStockRows.map((item, idx) => {
+                const q = parseQty(item.qty ?? item.quantity);
+                const pct = Math.min(100, Math.round((q / maxQtyDisplay) * 100));
+                return (
+                  <div key={item.id ?? idx} className="space-y-2 min-w-0">
+                    <div className="flex justify-between items-center gap-3 min-w-0">
+                      <span className="font-bold text-sm truncate">{item.name}</span>
+                      <span
+                        className={`text-xs font-bold shrink-0 tabular-nums ${
+                          item.status === 'Critical' ? 'text-danger' : 'text-accent'
+                        }`}
+                      >
+                        {Number.isFinite(q) ? q.toLocaleString() : item.qty}
+                      </span>
+                    </div>
+                    <div className="h-3 bg-white/5 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-700 ${
+                          item.status === 'Critical' ? 'bg-danger' : 'bg-accent'
+                        }`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <StatusBadge status={item.status} />
+                      {(item.location || item.warehouse_name) && (
+                        <span className="text-[10px] text-secondary truncate">
+                          {item.location || item.warehouse_name}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <Link
+            to="/dashboard/inventory"
+            className="w-full mt-8 btn-secondary py-3 text-xs flex items-center justify-center gap-2"
+          >
+            Open inventory ledger <ArrowRight size={14} />
+          </Link>
         </div>
 
-        <div className="space-y-8">
-          <div className="glass-card p-6 border-danger/10">
-            <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
-              <AlertTriangle className="text-danger" size={20} /> Low Stock Alerts
+        <div className="min-w-0">
+          <div className="glass-card p-5 sm:p-6 border-danger/10 min-w-0">
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <AlertTriangle className="text-danger shrink-0" size={20} /> Low-stock alerts
             </h3>
-            <div className="space-y-4">
-              {lowStockAlerts.map((alert, idx) => (
-                <div key={idx} className="flex items-center justify-between p-4 bg-white/[0.02] border border-border rounded-xl">
-                  <div>
-                    <p className="text-sm font-bold">{alert.item}</p>
-                    <p className="text-xs text-secondary mt-0.5">{alert.count} {alert.unit}</p>
-                  </div>
-                  <div className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${alert.type === 'danger' ? 'bg-danger/20 text-danger' : 'bg-warning/20 text-warning'}`}>
-                    {alert.type === 'danger' ? 'Critical' : 'Warning'}
-                  </div>
-                </div>
-              ))}
-            </div>
+            {lowStockAlerts.length === 0 ? (
+              <p className="text-secondary text-sm py-4">
+                No active alerts from the API. When items breach thresholds, they appear here.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {lowStockAlerts.slice(0, 8).map((alert, idx) => (
+                  <li
+                    key={idx}
+                    className="flex items-center justify-between gap-3 p-4 bg-white/[0.02] border border-border rounded-xl min-w-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold truncate">{alert.item}</p>
+                      <p className="text-xs text-secondary mt-0.5 tabular-nums">
+                        {alert.count} {alert.unit}
+                      </p>
+                    </div>
+                    <div
+                      className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest shrink-0 ${
+                        alert.type === 'danger'
+                          ? 'bg-danger/20 text-danger'
+                          : 'bg-warning/20 text-warning'
+                      }`}
+                    >
+                      {alert.type === 'danger' ? 'Critical' : 'Warning'}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Link
+              to="/dashboard/inventory-alerts"
+              className="w-full mt-6 btn-secondary py-3 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2"
+            >
+              View all alerts <ArrowRight size={14} />
+            </Link>
           </div>
 
-          <div className="glass-card p-6 bg-accent/[0.02]">
-            <h3 className="text-sm font-bold text-muted uppercase tracking-widest mb-6">Recent Arrivals</h3>
-            <div className="space-y-3">
-              <div className="p-3 bg-card border border-border rounded-xl flex items-center gap-4">
-                <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center text-accent">
-                  <Package size={18} />
-                </div>
-                <div>
-                  <p className="text-xs font-bold">Imported Cheese Batch</p>
-                  <p className="text-[10px] text-muted uppercase">Pending Quality Check</p>
-                </div>
-              </div>
-              <div className="p-3 bg-card border border-border rounded-xl flex items-center gap-4">
-                <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center text-accent">
-                  <Package size={18} />
-                </div>
-                <div>
-                  <p className="text-xs font-bold">Luxury Candles (Gold)</p>
-                  <p className="text-[10px] text-muted uppercase">Ready for Storage</p>
-                </div>
-              </div>
+          {(warehouses?.length ?? 0) > 0 && (
+            <div className="glass-card p-5 sm:p-6 mt-6 min-w-0">
+              <h3 className="text-sm font-bold text-muted uppercase tracking-widest mb-4 flex items-center gap-2">
+                <Warehouse size={16} /> Warehouse coverage
+              </h3>
+              <ul className="space-y-2 text-sm">
+                {warehouses.slice(0, 6).map((w) => (
+                  <li key={w.id} className="flex justify-between gap-2 py-2 border-b border-white/5 last:border-0 min-w-0">
+                    <span className="font-bold truncate">{w.name || w.warehouse_name || `WH-${w.id}`}</span>
+                    <span className="text-secondary text-xs shrink-0">
+                      {inventory.filter(
+                        (i) =>
+                          String(i.warehouse_id) === String(w.id) ||
+                          (i.location || i.warehouse_name) === (w.name || w.warehouse_name),
+                      ).length}{' '}
+                      SKUs
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <Link
+                to="/dashboard/warehouses"
+                className="w-full mt-4 text-center text-xs font-bold text-accent hover:underline inline-flex items-center justify-center gap-1"
+              >
+                Manage warehouses <ArrowRight size={12} />
+              </Link>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
-      <div className="glass-card p-6">
-        <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
-          <History className="text-accent" size={20} /> Warehouse Activity Log
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {warehouseActivity.map((activity, idx) => (
-            <div key={idx} className="p-5 bg-white/[0.02] border border-border rounded-2xl hover:border-accent/20 transition-all group">
-              <div className="flex items-center gap-4 mb-4">
-                <div className={`p-3 bg-white/5 rounded-xl ${activity.color} group-hover:scale-110 transition-transform`}>
-                  <activity.icon size={20} />
-                </div>
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-widest text-muted">{activity.action}</p>
-                  <p className="text-sm font-bold text-white">{activity.item}</p>
-                </div>
-              </div>
-              <p className="text-[10px] text-secondary font-medium">{activity.time}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <StockModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSave={handleSaveStock}
-      />
+      <StockModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveStock} />
     </div>
   );
 };

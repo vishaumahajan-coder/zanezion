@@ -210,7 +210,8 @@ const Landing = () => {
                         <a href="#services" className="hover:text-accent transition-colors">Services</a>
                         <a href="#solutions" className="hover:text-accent transition-colors">Solutions</a>
                         <Link to="/staff-signup" className="hover:text-accent transition-colors">Careers</Link>
-                        <Link to="/login" className="px-6 py-3 bg-white/5 border border-white/10 rounded-full hover:bg-white/10 hover:border-accent/40 transition-all">Client Portal</Link>
+                        <Link to="/signup" className="px-6 py-3 bg-accent/10 border border-accent/30 text-accent rounded-full hover:bg-accent hover:text-black transition-all">Sign Up</Link>
+                        <Link to="/login" className="px-6 py-3 bg-white/5 border border-white/10 rounded-full hover:bg-white/10 hover:border-accent/40 transition-all">Login</Link>
                     </div>
                 </div>
             </nav>
@@ -254,10 +255,13 @@ const Landing = () => {
                         transition={{ duration: 0.8, delay: 0.3 }}
                         className="flex flex-col sm:flex-row items-center justify-center gap-4"
                     >
-                        <Link to="/login" className="px-10 py-5 bg-accent text-black font-black uppercase tracking-widest rounded-2xl hover:bg-white transition-all shadow-xl shadow-accent/10 flex items-center gap-2 group">
-                            Get Started <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                        <Link to="/signup" className="px-10 py-5 bg-accent text-black font-black uppercase tracking-widest rounded-2xl hover:bg-white transition-all shadow-xl shadow-accent/10 flex items-center gap-2 group">
+                            Create Account <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                         </Link>
-                        <a href="#services" className="px-10 py-5 bg-white/5 border border-white/10 text-white font-black uppercase tracking-widest rounded-2xl hover:bg-white/10 transition-all">
+                        <Link to="/login" className="px-10 py-5 bg-white/5 border border-white/10 text-white font-black uppercase tracking-widest rounded-2xl hover:bg-white/10 hover:border-accent/40 transition-all">
+                            Login
+                        </Link>
+                        <a href="#services" className="px-10 py-5 bg-transparent border border-white/5 text-secondary font-black uppercase tracking-widest rounded-2xl hover:bg-white/5 transition-all">
                             Explore Services
                         </a>
                     </motion.div>
@@ -584,9 +588,14 @@ const Landing = () => {
                     <p className="text-lg text-secondary mb-12 leading-relaxed italic">
                         "From logistics to Luxury Provisioning: We serve places where time slows down and standards rise. Executing flawlessly, we curate and coordinate everything that supports your guest experience behind the scenes. Discreet, detailed, and locally connected, we keep your property effortlessly prepared, so every arrival, every stay, and every voyage feels seamless, considered, and unmistakably elevated."
                     </p>
-                    <Link to="/login" className="px-12 py-6 bg-accent text-black font-black uppercase tracking-widest rounded-2xl hover:bg-white transition-all shadow-2xl shadow-accent/20">
-                        Access The Network
-                    </Link>
+                    <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                        <Link to="/signup" className="px-12 py-6 bg-accent text-black font-black uppercase tracking-widest rounded-2xl hover:bg-white transition-all shadow-2xl shadow-accent/20 flex items-center gap-3 group">
+                            Join Now <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                        </Link>
+                        <Link to="/login" className="px-12 py-6 bg-white/5 border border-white/10 text-white font-black uppercase tracking-widest rounded-2xl hover:bg-white/10 hover:border-accent/40 transition-all">
+                            Login
+                        </Link>
+                    </div>
                 </div>
             </section>
 
@@ -611,7 +620,8 @@ const Landing = () => {
                         </div>
                         <div className="space-y-4">
                             <p className="text-accent">Access</p>
-                            <p className="hover:text-white cursor-pointer">Login</p>
+                            <Link to="/signup" className="block hover:text-accent transition-colors">Sign Up</Link>
+                            <Link to="/login" className="block hover:text-white transition-colors">Login</Link>
                             <p className="hover:text-white cursor-pointer">Privacy</p>
                         </div>
                     </div>

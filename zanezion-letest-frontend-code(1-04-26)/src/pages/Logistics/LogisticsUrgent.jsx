@@ -9,9 +9,13 @@ import {
 } from 'lucide-react';
 
 import { useData } from '../../context/GlobalDataContext';
+import { normalizeRole } from '../../utils/authUtils';
 
 const Urgent = () => {
-  const { urgentTasks = [], addUrgentTask, updateUrgentTask, deleteUrgentTask, hasMenuPermission } = useData();
+  const { urgentTasks = [], fetchUrgentTasks, addUrgentTask, updateUrgentTask, deleteUrgentTask, hasMenuPermission, currentUser } = useData();
+  React.useEffect(() => {
+    if (fetchUrgentTasks) fetchUrgentTasks();
+  }, [fetchUrgentTasks]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('view');
   const [selectedTask, setSelectedTask] = useState(null);
@@ -64,7 +68,10 @@ const Urgent = () => {
           </h1>
           <p className="text-secondary text-[10px] md:text-xs mt-1 font-black uppercase tracking-[0.2em] opacity-70 leading-relaxed">High-priority Logistics missions requiring immediate intervention.</p>
         </div>
-        {hasMenuPermission('Deliveries', 'can_add') && (
+        {(hasMenuPermission('Urgent', 'can_add') || 
+          normalizeRole(currentUser?.role) === 'procurement' || 
+          (localStorage.getItem('userRole') || '').toLowerCase().includes('procurement') ||
+          (localStorage.getItem('userRole') || '').toLowerCase().includes('admin')) && (
           <button
             className="bg-danger text-white py-4 px-8 rounded-2xl flex items-center justify-center gap-3 font-black uppercase text-[10px] tracking-[0.2em] shadow-2xl shadow-danger/20 hover:scale-[1.02] transition-all border border-danger/30 active:scale-95 w-full lg:w-auto"
             onClick={() => handleAction('add', {})}
@@ -99,8 +106,8 @@ const Urgent = () => {
           onView={(item) => handleAction('view', item)}
           onEdit={(item) => handleAction('edit', item)}
           onDelete={(item) => handleAction('delete', item)}
-          canEdit={hasMenuPermission('Deliveries', 'can_edit')}
-          canDelete={hasMenuPermission('Deliveries', 'can_delete')}
+          canEdit={hasMenuPermission('Urgent', 'can_edit') || normalizeRole(currentUser?.role) === 'procurement'}
+          canDelete={hasMenuPermission('Urgent', 'can_delete') || normalizeRole(currentUser?.role) === 'procurement'}
         />
       </div>
 

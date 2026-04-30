@@ -4,6 +4,81 @@ import { VENDOR_PERFORMANCE, INVENTORY_ALERTS, RECENT_ORDERS, CLIENTS, ACCESS_PL
 
 const GlobalDataContext = createContext();
 
+/** Shallow merge: overlay keys only if value !== undefined (keeps false / 0 / ''). */
+function mergeUserFields(base, ...overlays) {
+    const out = { ...(base && typeof base === 'object' ? base : {}) };
+    for (const o of overlays) {
+        if (!o || typeof o !== 'object') continue;
+        for (const [k, v] of Object.entries(o)) {
+            if (v !== undefined) out[k] = v;
+        }
+    }
+    return out;
+}
+
+function withoutPassword(obj) {
+    if (!obj || typeof obj !== 'object') return {};
+    const { password, password_confirm, current_password, ...rest } = obj;
+    return rest;
+}
+
+function normalizeApiUserPayload(data) {
+    if (!data || typeof data !== 'object') return null;
+    if (data.user && typeof data.user === 'object') return data.user;
+    if (Array.isArray(data)) return data[0] && typeof data[0] === 'object' ? data[0] : null;
+    return data;
+}
+
+/** API route id: numeric or first digits from VND-123 style. */
+function vendorPathId(id) {
+    if (id == null || id === '') return '';
+    const s = String(id).trim();
+    if (/^\d+$/.test(s)) return s;
+    const rest = s.replace(/^VND-?/i, '');
+    if (/^\d+$/.test(rest)) return rest;
+    const m = s.match(/(\d+)/);
+    return m ? m[1] : s;
+}
+
+function buildVendorApiBody(vendor, companyId) {
+    const name = (vendor.name || '').trim();
+    if (!name) {
+        const err = new Error('Vendor name is required.');
+        err.code = 'VALIDATION';
+        throw err;
+    }
+    const contactName = (vendor.contact_name || vendor.contact || '').trim();
+    const body = {
+        name,
+        email: (vendor.email || '').trim() || undefined,
+        phone: (vendor.phone || '').trim() || undefined,
+        category: (vendor.category || '').trim() || undefined,
+        address: (vendor.address || '').trim() || undefined,
+    };
+    if (contactName) body.contact_name = contactName;
+
+    const r = vendor.rating;
+    const d = vendor.delivery;
+    if (r !== '' && r != null && !Number.isNaN(Number(r))) {
+        body.rating = Math.min(100, Math.max(0, Math.round(Number(r))));
+    }
+    if (d !== '' && d != null && !Number.isNaN(Number(d))) {
+        body.delivery = Math.min(100, Math.max(0, Math.round(Number(d))));
+    }
+
+    if (companyId != null && companyId !== '') {
+        const n = Number(companyId);
+        body.company_id = Number.isFinite(n) && !Number.isNaN(n) ? n : companyId;
+    }
+
+    const out = {};
+    for (const [k, v] of Object.entries(body)) {
+        if (v === undefined || v === '') continue;
+        out[k] = v;
+    }
+    return out;
+}
+
 export const GlobalDataProvider = ({ children }) => {
     // Initial States from data.js
     const [subscriptionRequests, setSubscriptionRequests] = useState([]);
@@ -34,14 +109,37 @@ export const GlobalDataProvider = ({ children }) => {
         return [];
     });
 
+    /** Core procurement screens: DB role menus sometimes omit can_add; procurement staff should manage these. */
+    const PROCUREMENT_FULL_CRUD_MENUS = new Set(['quotes', 'purchase requests', 'vendors', 'purchase orders']);
+
+    /** Inventory role: warehouses & stock ledger are core duties; RBAC rows sometimes omit create. */
+    const INVENTORY_FULL_CRUD_MENUS = new Set(['warehouses', 'inventory']);
+    /** Logistics role: delivery ops screens should always support standard CRUD actions. */
+    const LOGISTICS_FULL_CRUD_MENUS = new Set(['fleet', 'deliveries', 'tracking', 'routes', 'urgent']);
+    /** Concierge role should always be able to create/manage their core service menus. */
+    const CONCIERGE_FULL_CRUD_MENUS = new Set(['events', 'guest requests', 'luxury items']);
+
     // Helper: check if user has a specific action on a menu
     const hasMenuPermission = (menuName, action = 'can_view') => {
         const role = currentUser?.role?.toLowerCase().replace(/\s+/g, '_');
-        // Super admin and admin always have full access
         if (role === 'super_admin' || role === 'superadmin' || role === 'admin') return true;
+
+        const key = String(menuName || '').trim().toLowerCase();
+        if (role === 'procurement' && PROCUREMENT_FULL_CRUD_MENUS.has(key)) {
+            return ['can_view', 'can_add', 'can_edit', 'can_delete'].includes(action);
+        }
+        if (role === 'inventory' && INVENTORY_FULL_CRUD_MENUS.has(key)) {
+            return ['can_view', 'can_add', 'can_edit', 'can_delete'].includes(action);
+        }
+        if (role === 'logistics' && LOGISTICS_FULL_CRUD_MENUS.has(key)) {
+            return ['can_view', 'can_add', 'can_edit', 'can_delete'].includes(action);
+        }
+        if (role === 'concierge' && CONCIERGE_FULL_CRUD_MENUS.has(key)) {
+            return ['can_view', 'can_add', 'can_edit', 'can_delete'].includes(action);
+        }
+
         // If no permissions loaded, deny by default (secure fallback)
         if (!menuPermissions || menuPermissions.length === 0) return false;
-        const key = String(menuName || '').trim().toLowerCase();
         const perm = menuPermissions.find(p => String(p.name || '').trim().toLowerCase() === key);
         return perm ? !!perm[action] : false;
     };
@@ -70,6 +168,9 @@ export const GlobalDataProvider = ({ children }) => {
     const [routes, setRoutes] = useState([]);
     const [urgentTasks, setUrgentTasks] = useState([]);
     const [tracking, setTracking] = useState([]);
+    // Backend in some deployments doesn't expose tracking/urgent endpoints.
+    const trackingApiUnavailableRef = React.useRef(false);
+    const urgentApiUnavailableRef = React.useRef(false);
     const [stockMovements, setStockMovements] = useState([]);
     const [cart, setCart] = useState([]);
     const [leaveRequests, setLeaveRequests] = useState([]);
@@ -262,11 +363,26 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             const res = await api.get('/users');
             if (res.data?.success) {
-                setUsers(res.data.data);
+                const list = res.data.data;
+                setUsers(list);
+                return list;
             }
         } catch (e) {
             console.error("Fetch staff failed", e);
             setUsers([]);
+        }
+        return null;
+    }, []);
+
+    const [customerUsers, setCustomerUsers] = React.useState([]);
+    const fetchCustomerUsers = React.useCallback(async () => {
+        try {
+            const res = await api.get('/users/customers');
+            if (res.data?.success) {
+                setCustomerUsers(res.data.data);
+            }
+        } catch (e) {
+            console.error("Fetch customer users failed", e);
         }
     }, []);
 
@@ -297,26 +413,56 @@ export const GlobalDataProvider = ({ children }) => {
             const res = await api.get('/logistics/deliveries');
             if (res.data && res.data.success) {
                 setDeliveries(res.data.data.map(d => {
-                    const items = d.package_details ? JSON.parse(d.package_details) : [];
+                    let items = [];
+                    if (d.package_details) {
+                        try { items = JSON.parse(d.package_details); } catch { items = []; }
+                    }
+                    if (!Array.isArray(items)) items = [];
+                    const orderRef = d.order_id ? `ORD-${String(d.order_id).padStart(3, '0')}` : null;
                     return {
                         id: `DEL-${String(d.id).padStart(3, '0')}`,
                         db_id: d.id,
-                        orderId: d.order_id,
+                        orderId: orderRef,
+                        order_id_raw: d.order_id,
                         mission_type: d.mission_type,
-                        item: items.length > 0 ? items[0].name : (d.mission_type === 'Chauffeur' ? 'VIP Chauffeur Service' : `Order #${d.order_id}`),
+                        item: items.length > 0 ? items[0].name : (d.mission_type === 'Chauffeur' ? 'VIP Chauffeur Service' : (orderRef ? `Order ${orderRef}` : 'Internal Mission')),
                         items: items,
                         status: d.status,
                         driver: d.driver_name,
                         vehicleId: d.plate_number,
-                        location: d.route || 'In Transit',
-                        mode: 'Road',
-                        deliveryDate: d.delivery_date,
-                        eta: 'Calculating...'
+                        pickupLocation: d.pickup_location,
+                        dropLocation: d.drop_location,
+                        route: d.route,
+                        location: d.route || d.pickup_location || 'In Transit',
+                        mode: d.mission_type === 'Chauffeur' ? 'Road' : 'Road',
+                        deliveryDate: d.delivery_date ? d.delivery_date.split('T')[0] : null,
+                        eta: d.delivery_date ? d.delivery_date.split('T')[0] : 'TBD'
                     };
                 }));
             }
         } catch (e) { console.error("Fetch deliveries failed", e); }
     }, []);
+
+    const parsePOItems = (raw) => {
+        let items = raw;
+        if (typeof items === 'string') {
+            try { items = JSON.parse(items); } catch { items = []; }
+        }
+        if (!Array.isArray(items)) return [];
+        return items.map((item, idx) => {
+            const orderedQty = item.orderedQty ?? item.quantity ?? item.qty ?? 0;
+            const price = item.price ?? item.unit_price ?? item.unitPrice ?? 0;
+            const receivedQty = item.receivedQty ?? item.received_qty ?? 0;
+            return {
+                ...item,
+                id: item.id ?? idx,
+                orderedQty,
+                price,
+                receivedQty,
+                pendingQty: orderedQty - receivedQty
+            };
+        });
+    };
 
     const fetchProcurement = React.useCallback(async () => {
         try {
@@ -327,28 +473,59 @@ export const GlobalDataProvider = ({ children }) => {
             ]);
             if (reqs.data?.success) setPurchaseRequests(reqs.data.data);
             if (quotes.data?.success) setQuotes(quotes.data.data);
-            if (pos.data?.success) setPurchaseOrders(pos.data.data);
+            if (pos.data?.success) setPurchaseOrders(pos.data.data.map(po => ({ ...po, items: parsePOItems(po.items) })));
         } catch (e) { console.error("Fetch procurement failed", e); }
     }, []);
 
     const fetchQuotes = React.useCallback(async (params = {}) => {
         try {
             const res = await api.get('/procurement/quotes', { params });
-            if (res.data?.success) setQuotes(res.data.data);
+            if (res.data?.success) {
+                setQuotes(res.data.data.map(q => ({
+                    ...q,
+                    vendor: q.vendor_name || q.vendor,
+                    vendorName: q.vendor_name || q.vendor,
+                    date: q.created_at || q.date,
+                    total: parseFloat(q.total_amount || q.total || 0),
+                    validity: q.validity_date || q.validity
+                })));
+            }
         } catch (e) { console.error("Fetch quotes failed", e); }
     }, []);
 
     const fetchPurchaseRequests = React.useCallback(async (params = {}) => {
         try {
             const res = await api.get('/procurement/requests', { params });
-            if (res.data?.success) setPurchaseRequests(res.data.data);
+            if (res.data?.success) {
+                setPurchaseRequests(res.data.data.map(r => {
+                    let parsedItems = r.items;
+                    if (typeof parsedItems === 'string') {
+                        try { parsedItems = JSON.parse(parsedItems); } catch { parsedItems = []; }
+                    }
+                    return { 
+                        ...r, 
+                        items: Array.isArray(parsedItems) ? parsedItems : [],
+                        total: r.estimated_cost || r.total,
+                        date: r.created_at || r.date
+                    };
+                }));
+            }
         } catch (e) { console.error("Fetch purchase requests failed", e); }
     }, []);
 
     const fetchPurchaseOrders = React.useCallback(async (params = {}) => {
         try {
             const res = await api.get('/procurement/po', { params });
-            if (res.data?.success) setPurchaseOrders(res.data.data);
+            if (res.data?.success) {
+                setPurchaseOrders(res.data.data.map(po => ({
+                    ...po,
+                    vendorName: po.vendor_name || po.vendorName,
+                    date: po.created_at || po.date,
+                    total: parseFloat(po.total_amount || po.total || 0),
+                    paymentTerms: po.payment_terms || po.paymentTerms,
+                    items: parsePOItems(po.items)
+                })));
+            }
         } catch (e) { console.error("Fetch POs failed", e); }
     }, []);
 
@@ -441,13 +618,25 @@ export const GlobalDataProvider = ({ children }) => {
     const fetchSupportingDocs = React.useCallback(async () => {
         try {
             const [assignments, leave] = await Promise.all([
-                api.get('/staff/assignments').catch(e => ({ data: [] })),
-                api.get('/staff/leave').catch(e => ({ data: [] }))
+                api.get('/staff/assignments').catch(e => ({ data: { success: false, data: [] } })),
+                api.get('/staff/leave').catch(e => ({ data: { success: false, data: [] } }))
             ]);
-            if (assignments.data?.success) setStaffAssignments(assignments.data.data);
-            if (leave.data?.success) setLeaveRequests(leave.data.data);
-        } catch (e) { console.error("Fetch supporting docs failed", e); }
-    }, []);
+            
+            if (assignments.data?.success) {
+                setStaffAssignments(assignments.data.data);
+            } else if (Array.isArray(assignments.data)) {
+                setStaffAssignments(assignments.data);
+            }
+
+            if (leave.data?.success) {
+                setLeaveRequests(leave.data.data);
+            } else if (Array.isArray(leave.data)) {
+                setLeaveRequests(leave.data);
+            }
+        } catch (e) { 
+            console.error("Fetch supporting docs failed", e); 
+        }
+    }, [currentUser?.id]);
 
     const fetchWarehouses = React.useCallback(async () => {
         try {
@@ -463,7 +652,36 @@ export const GlobalDataProvider = ({ children }) => {
                 api.get('/support/events').catch(e => ({ data: [] })),
                 api.get('/support/guest-requests').catch(e => ({ data: [] }))
             ]);
-            if (tickets.data?.success) setSupportTickets(tickets.data.data);
+            if (tickets.data?.success) {
+                const mapped = tickets.data.data.map(t => {
+                    let msgs = [];
+                    if (t.messages) {
+                        try {
+                            msgs = typeof t.messages === 'string' ? JSON.parse(t.messages) : t.messages;
+                        } catch (e) { msgs = []; }
+                    }
+                    if (!Array.isArray(msgs) || msgs.length === 0) {
+                        msgs = [{
+                            sender: 'client',
+                            text: t.description || 'No description provided.',
+                            time: new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        }];
+                    }
+
+                    return {
+                        id: `TKT-${String(t.id).padStart(3, '0')}`,
+                        db_id: t.id,
+                        clientName: t.submitted_by_name || 'System User',
+                        subject: t.subject,
+                        category: t.category || 'General',
+                        priority: t.priority ? t.priority.charAt(0).toUpperCase() + t.priority.slice(1) : 'Medium',
+                        status: t.status ? t.status.charAt(0).toUpperCase() + t.status.slice(1).replace('_', ' ') : 'Open',
+                        date: t.created_at ? t.created_at.split('T')[0] : '',
+                        messages: msgs
+                    };
+                });
+                setSupportTickets(mapped);
+            }
             if (eventsData.data?.success) {
                 setEvents(eventsData.data.data.map(e => ({
                     ...e,
@@ -492,17 +710,16 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             const res = await api.get('/concierge/luxury-items');
             const luxuryData = res.data?.success ? res.data.data : (Array.isArray(res.data) ? res.data : []);
-            if (luxuryData.length > 0) {
-                setLuxuryItems(luxuryData.map(item => ({
-                    id: item.id,
-                    item: item.item_name,
-                    owner: item.owner_name,
-                    vault: item.vault_location,
-                    status: item.status,
-                    value: item.estimated_value,
-                    notes: item.notes
-                })));
-            }
+            const mapped = luxuryData.map(item => ({
+                id: item.id,
+                item: item.item_name,
+                owner: item.owner_name,
+                vault: item.vault_location,
+                status: item.status,
+                value: item.estimated_value,
+                notes: item.notes
+            }));
+            setLuxuryItems(mapped);
         } catch (e) { console.error("Fetch luxury items failed", e); }
     }, []);
 
@@ -591,12 +808,23 @@ export const GlobalDataProvider = ({ children }) => {
         }
         setLoading(true);
         try {
-            await Promise.all([
+            const fetches = [
                 fetchStaff(),
                 fetchDashboardStats(),
                 fetchSystemSettings(),
-                fetchInventoryAlerts()
-            ]);
+                fetchInventoryAlerts(),
+                fetchTracking(),
+                fetchUrgentTasks()
+            ];
+
+            // If the user is staff, fetch their specific data
+            if (['staff', 'operations', 'logistics', 'inventory'].includes(currentUser?.role?.toLowerCase())) {
+                fetches.push(fetchSupportingDocs());
+                fetches.push(fetchDeliveries());
+                fetches.push(fetchPayHistory());
+            }
+
+            await Promise.all(fetches);
         } catch (err) {
             console.error("Error fetching initial context data:", err);
             setError(err.message);
@@ -674,6 +902,7 @@ export const GlobalDataProvider = ({ children }) => {
                     category: entry.category,
                     price: entry.price,
                     quantity: entry.qty,
+                    warehouse_id: entry.warehouseId || entry.warehouse_id || null,
                     inventory_type: entry.inventoryType || 'Marketplace',
                     client_id: entry.clientId || null,
                     sku: entry.sku || `SKU-${Math.floor(Math.random() * 100000)}`
@@ -916,10 +1145,42 @@ export const GlobalDataProvider = ({ children }) => {
 
     const updateUser = async (updated) => {
         try {
-            const res = await api.put(`/users/${updated.id}`, updated);
+            const id = updated?.id;
+            if (id == null) {
+                console.error('updateUser: missing user id');
+                return;
+            }
+            const res = await api.put(`/users/${id}`, updated);
             if (res.data?.success) {
-                await fetchStaff();
-                addLog({ action: 'Staff Profile Modified', detail: `Updated record for ${updated.name}.`, type: 'system' });
+                const apiUser = normalizeApiUserPayload(res.data.data);
+                const safePayload = withoutPassword(updated);
+
+                const list = await fetchStaff();
+                setUsers((prev) => {
+                    const baseList = Array.isArray(list) ? list : prev;
+                    if (!Array.isArray(baseList)) return prev;
+                    return baseList.map((u) => {
+                        if (String(u.id) !== String(id)) return u;
+                        return mergeUserFields(u, apiUser, safePayload);
+                    });
+                });
+
+                setCurrentUser((cur) => {
+                    if (!cur || String(cur.id) !== String(id)) return cur;
+                    const next = mergeUserFields(cur, apiUser, safePayload);
+                    try {
+                        localStorage.setItem('user', JSON.stringify(next));
+                    } catch (e) {
+                        console.error('Failed to persist user to localStorage', e);
+                    }
+                    return next;
+                });
+
+                addLog({
+                    action: 'Staff Profile Modified',
+                    detail: `Updated record for ${safePayload.name || apiUser?.name || id}.`,
+                    type: 'system',
+                });
                 return res.data;
             }
         } catch (error) {
@@ -932,7 +1193,13 @@ export const GlobalDataProvider = ({ children }) => {
 
     const reviewStaff = async (id, status) => {
         try {
-            await api.put(`/auth/staff-review/${id}`, { status });
+            // Try tenant-scoped review first (admin reviewing their own staff)
+            // Falls back to super_admin staff-review endpoint
+            try {
+                await api.put(`/users/${id}/review`, { status });
+            } catch (e) {
+                await api.put(`/auth/staff-review/${id}`, { status });
+            }
 
             // Re-fetch staff to update local state
             await fetchStaff();
@@ -1065,6 +1332,35 @@ export const GlobalDataProvider = ({ children }) => {
     const updateMissionStatus = async (id, status) => {
         try {
             await api.put(`/missions/${id}/status`, { status });
+
+            // If mission is dispatched, ensure a delivery row exists for operations tracking.
+            if (String(status).toLowerCase() === 'en_route') {
+                const mission = missions.find(m => String(m.id) === String(id));
+                if (mission) {
+                    const hasLinkedDelivery = deliveries.some((d) => {
+                        const dOrderRaw = d.order_id_raw ?? (d.orderId ? parseInt(String(d.orderId).replace(/[^0-9]/g, ''), 10) : null);
+                        return (
+                            (mission.orderId && Number(dOrderRaw) === Number(mission.orderId)) ||
+                            (mission.id && String(d.mission_id || '') === String(mission.id))
+                        );
+                    });
+
+                    if (!hasLinkedDelivery) {
+                        await addDelivery({
+                            orderId: mission.orderId || null,
+                            missionType: mission.missionType || mission.mission_type || 'Logistics',
+                            location: mission.route || mission.location || '',
+                            driver: mission.driverName || mission.driver_name || '',
+                            vehicleId: mission.plateNumber || mission.vehicleId || mission.plate_number || '',
+                            items: mission.items || [{ name: `Mission ${mission.id}`, qty: 1 }],
+                            pickupLocation: mission.pickup_location || '',
+                            dropLocation: mission.drop_location || mission.destination || '',
+                            dueDate: mission.date || null,
+                            status: 'In Transit',
+                        });
+                    }
+                }
+            }
             await fetchMissions();
             addLog({ action: 'Mission Update', detail: `Mission ${id} status updated to ${status}.`, type: 'logistics' });
         } catch (error) {
@@ -1124,13 +1420,16 @@ export const GlobalDataProvider = ({ children }) => {
             const userRole = (currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
             const isCustomer = userRole === 'customer';
             const res = await api.post('/orders', {
-                customer_id: isCustomer ? null : targetClientId,
-                company_id: (currentUser && userRole !== 'super_admin') ? (currentUser.company_id || currentUser.companyId) : targetClientId,
+                customer_id: isCustomer ? currentUser?.id : targetClientId,
+                // Customer orders go to default company (1) so admin can see them
+                company_id: isCustomer
+                    ? (currentUser?.company_id || 1)
+                    : ((currentUser && userRole !== 'super_admin') ? (currentUser.company_id || currentUser.companyId) : targetClientId),
                 vendor_id: order.vendorId || null,
                 type: order.type || 'Custom Order',
                 items: order.items,
                 notes: order.notes,
-                location: order.location || null,
+                location: order.deliveryAddress || order.location || null,
                 due_date: order.dueDate || null,
                 status: order.status || 'pending_review'
             });
@@ -1261,9 +1560,21 @@ export const GlobalDataProvider = ({ children }) => {
             // Re-fetch to sync
             await fetchDeliveries();
             if (updated.status === 'Delivered' || updated.status === 'Completed') {
+                // Auto-update the linked order status to 'delivered'
+                const numericOrderId = updated.order_id_raw ||
+                    (updated.orderId ? parseInt(String(updated.orderId).replace(/[^0-9]/g, ''), 10) : null);
+                if (numericOrderId && !isNaN(numericOrderId)) {
+                    try {
+                        await api.patch(`/orders/${numericOrderId}/status`, { status: 'delivered' });
+                    } catch (e) {
+                        console.warn('Could not auto-update order status:', e.message);
+                    }
+                }
                 await fetchOrders();
-                if (updated.orderId) {
-                    const matchingOrder = orders.find(o => String(o.id) === String(updated.orderId));
+                const rawId = updated.order_id_raw ||
+                    (updated.orderId ? parseInt(String(updated.orderId).replace(/[^0-9]/g, ''), 10) : null);
+                if (rawId) {
+                    const matchingOrder = orders.find(o => Number(o.id) === Number(rawId));
                     if (matchingOrder) {
                         await generateInvoiceFromOrder(matchingOrder);
                     }
@@ -1342,46 +1653,58 @@ export const GlobalDataProvider = ({ children }) => {
     // --- UNIVERSAL CRUD PROTOCOLS ---
     const addVendor = async (vendor) => {
         try {
-            const reqData = {
-                ...vendor,
-                contact_name: vendor.contact || vendor.contact_name || null,
-            };
+            const companyId = currentUser?.company_id ?? currentUser?.companyId;
+            const reqData = buildVendorApiBody(vendor, companyId);
             const res = await api.post('/vendors', reqData);
 
             // Re-fetch to ensure correct mapping and sync
             await fetchVendors();
 
             addLog({ action: 'Vendor Onboarding', detail: `Registered ${vendor.name} as verified partner.`, type: 'system' });
+            return res.data;
         } catch (error) {
             console.error("Failed to add vendor:", error);
+            throw error;
         }
     };
 
     const updateVendor = async (updated) => {
         try {
-            const reqData = {
-                ...updated,
-                contact_name: updated.contact,
-                phone: updated.phone
-            };
-            await api.put(`/vendors/${updated.id}`, reqData);
+            const pathId = vendorPathId(updated.id);
+            if (!pathId) {
+                const err = new Error('Invalid vendor ID.');
+                err.code = 'VALIDATION';
+                throw err;
+            }
+            const companyId = currentUser?.company_id ?? currentUser?.companyId;
+            const reqData = buildVendorApiBody(updated, companyId);
+            const res = await api.put(`/vendors/${pathId}`, reqData);
 
             // Re-fetch to ensure sync
             await fetchVendors();
 
             addLog({ action: 'Vendor Update', detail: `Recalibrated profile for ${updated.name}.`, type: 'system' });
+            return res.data;
         } catch (error) {
             console.error("Failed to update vendor:", error);
+            throw error;
         }
     };
 
     const deleteVendor = async (id) => {
         try {
-            await api.delete(`/vendors/${id}`);
-            setVendors(prev => prev.filter(v => v.id !== id));
+            const pathId = vendorPathId(id);
+            if (!pathId) {
+                const err = new Error('Invalid vendor ID.');
+                err.code = 'VALIDATION';
+                throw err;
+            }
+            await api.delete(`/vendors/${pathId}`);
+            await fetchVendors();
             addLog({ action: 'Vendor Removal', detail: `Decommissioned vendor reference ID ${id}.`, type: 'system' });
         } catch (error) {
             console.error("Failed to delete vendor:", error);
+            throw error;
         }
     };
 
@@ -1393,7 +1716,7 @@ export const GlobalDataProvider = ({ children }) => {
                 category: item.category,
                 price: parseFloat(item.price) || 0,
                 quantity: parseInt(item.qty) || 0, // Frontend uses qty
-                warehouse_id: item.warehouse_id || item.location ? 1 : null, // Simplification for now
+                warehouse_id: item.warehouse_id || item.warehouseId || null,
                 vendor_id: item.vendorId || null,
                 inventory_type: item.inventoryType || 'Marketplace',
                 client_id: item.clientId || null,
@@ -1417,7 +1740,7 @@ export const GlobalDataProvider = ({ children }) => {
                 category: updated.category,
                 price: parseFloat(updated.price) || 0,
                 quantity: parseInt(updated.qty) || 0,
-                warehouse_id: updated.warehouse_id || null,
+                warehouse_id: updated.warehouse_id || updated.warehouseId || null,
                 vendor_id: updated.vendorId || null,
                 client_id: updated.clientId || null
             };
@@ -1751,7 +2074,7 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             const res = await api.post('/procurement/quotes', quote);
             if (res.data?.success) {
-                setQuotes(prev => [res.data.data, ...prev]);
+                await fetchQuotes();
                 addLog({ action: 'Quote Manifest', detail: `Received procurement offer from Vendor ${quote.vendorId}.`, type: 'system' });
             }
         } catch (error) {
@@ -1783,7 +2106,7 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             const res = await api.post('/procurement/requests', req);
             if (res.data?.success) {
-                setPurchaseRequests(prev => [res.data.data, ...prev]);
+                await fetchPurchaseRequests();
                 addLog({ action: 'Request Initialized', detail: `New purchase manifest submitted by ${req.requester}.`, type: 'system' });
             }
         } catch (error) {
@@ -1827,7 +2150,7 @@ export const GlobalDataProvider = ({ children }) => {
             };
             const res = await api.post('/procurement/po', reqData);
             if (res.data?.success) {
-                setPurchaseOrders(prev => [res.data.data, ...prev]);
+                await fetchPurchaseOrders();
                 addLog({ action: 'PO Issued', detail: `Purchase Order ${res.data.data.id} sent to ${po.vendorName}.`, type: 'procurement' });
             }
         } catch (error) {
@@ -1859,7 +2182,7 @@ export const GlobalDataProvider = ({ children }) => {
             if (res.data?.success) {
                 // Re-fetch POs or update locally
                 const poRes = await api.get('/procurement/po');
-                if (poRes.data?.success) setPurchaseOrders(poRes.data.data);
+                if (poRes.data?.success) setPurchaseOrders(poRes.data.data.map(po => ({ ...po, items: parsePOItems(po.items) })));
 
                 addLog({ action: 'Goods Receiving', detail: `Shipment received against PO ${poId}.`, type: 'inventory' });
             }
@@ -1878,7 +2201,7 @@ export const GlobalDataProvider = ({ children }) => {
             };
             const res = await api.post('/warehouses', warehouseData);
             if (res.data?.success) {
-                setWarehouses(prev => [res.data.data, ...prev]);
+                await fetchWarehouses();
                 addLog({ action: 'Facility Added', detail: `Commissioned ${wh.name} into the network.`, type: 'system' });
             }
         } catch (error) {
@@ -1888,9 +2211,11 @@ export const GlobalDataProvider = ({ children }) => {
 
     const updateWarehouse = async (updated) => {
         try {
-            await api.put(`/warehouses/${updated.id}`, updated);
-            setWarehouses(prev => prev.map(w => w.id === updated.id ? updated : w));
-            addLog({ action: 'Facility Updated', detail: `Modified configurations for ${updated.name}.`, type: 'system' });
+            const res = await api.put(`/warehouses/${updated.id}`, updated);
+            if (res.data?.success) {
+                await fetchWarehouses();
+                addLog({ action: 'Facility Updated', detail: `Modified configurations for ${updated.name}.`, type: 'system' });
+            }
         } catch (error) {
             console.error("Failed to update warehouse:", error);
         }
@@ -2002,17 +2327,36 @@ export const GlobalDataProvider = ({ children }) => {
         }
     }, []);
 
+    const toggleAvailability = async (userId, forcedStatus = null) => {
+        try {
+            const user = users.find(u => u.id === userId);
+            const newStatus = forcedStatus !== null ? forcedStatus : (user ? !user.isAvailable : true);
+            
+            await api.put(`/staff/${userId}`, { is_available: newStatus });
+
+            setUsers(prev => prev.map(u => u.id === userId ? { ...u, isAvailable: newStatus } : u));
+            if (currentUser?.id === userId) {
+                const updatedUser = { ...currentUser, isAvailable: newStatus };
+                setCurrentUser(updatedUser);
+                localStorage.setItem('user', JSON.stringify(updatedUser));
+            }
+            addLog({ action: 'Status Update', detail: `${user?.name || 'Staff'} availability updated to ${newStatus ? 'Active' : 'Offline'}.`, type: 'system' });
+        } catch (error) {
+            console.error("Failed to toggle availability:", error);
+        }
+    };
+
     const fetchPayHistory = React.useCallback(async () => {
         try {
             const res = await api.get('/finance/my-payroll');
             if (res.data?.success) {
                 const mapped = res.data.data.map(p => ({
                     id: p.id,
-                    period: new Date(p.payment_date).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
-                    date: p.payment_date?.split('T')[0],
-                    hours: "Variable",
-                    total: `$${parseFloat(p.net_amount || 0).toLocaleString()}`,
-                    status: p.status,
+                    period: new Date(p.payment_date || p.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+                    date: (p.payment_date || p.created_at)?.split('T')[0],
+                    hours: p.hours || "Variable",
+                    total: `$${parseFloat(p.net_amount || p.amount || 0).toLocaleString()}`,
+                    status: p.status || 'Processed',
                     userId: p.user_id,
                     userName: p.user_name
                 }));
@@ -2038,10 +2382,17 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             // data.id is plate_number, data.db_id is the integer ID
             // data.deliveryId is the DEL-00x formatted ID, data.delivery_db_id is the integer ID
+            const deliveryDbId = data.delivery_db_id || (typeof data.deliveryId === 'string'
+                ? parseInt(String(data.deliveryId).replace(/[^0-9]/g, ''), 10)
+                : data.deliveryId);
+            if (!deliveryDbId) {
+                throw new Error('No delivery selected for dispatch.');
+            }
 
-            await api.patch(`/logistics/deliveries/${data.delivery_db_id}/status`, {
+            await api.patch(`/logistics/deliveries/${deliveryDbId}/status`, {
                 status: 'en_route',
-                vehicle_id: data.db_id // Ensure it's assigned if not already
+                vehicle_id: data.db_id, // Ensure it's assigned if not already
+                route_id: data.routeId || null
             });
 
             // Re-fetch to sync
@@ -2063,16 +2414,52 @@ export const GlobalDataProvider = ({ children }) => {
             }
 
             if (dRes.data.success) {
-                setDeliveries(dRes.data.data.map(d => ({
+                const mappedDeliveries = dRes.data.data.map(d => ({
                     id: `DEL-${String(d.id).padStart(3, '0')}`,
                     db_id: d.id,
                     orderId: d.order_id,
+                    order_id_raw: d.order_id,
                     status: d.status,
                     driver: d.driver_name,
                     vehicleId: d.plate_number,
                     location: d.route || 'In Transit',
+                    route: d.route,
                     items: d.package_details ? JSON.parse(d.package_details) : []
-                })));
+                }));
+                setDeliveries(mappedDeliveries);
+
+                // Auto-sync tracking row for dispatched mission so Tracking tab reflects immediately.
+                const dispatched = mappedDeliveries.find((d) => Number(d.db_id) === Number(deliveryDbId))
+                    || mappedDeliveries.find((d) => String(d.id) === String(data.deliveryId));
+                if (dispatched) {
+                    const trackingRow = {
+                        id: `TRK-DEL-${dispatched.db_id}`,
+                        asset: dispatched.vehicleId || data.id || 'Assigned Vehicle',
+                        location: data.routeName || dispatched.route || dispatched.location || 'In Transit',
+                        signal: 'Strong',
+                        eta: dispatched.eta || 'Live',
+                        status: String(dispatched.status || '').toLowerCase() === 'en_route' ? 'En Route' : 'Active',
+                        deliveryId: dispatched.id,
+                    };
+                    setTracking(prev => {
+                        const idx = prev.findIndex(t => String(t.id) === String(trackingRow.id));
+                        if (idx === -1) return [trackingRow, ...prev];
+                        const next = [...prev];
+                        next[idx] = { ...next[idx], ...trackingRow };
+                        return next;
+                    });
+                }
+            }
+
+            if (data.markUrgent) {
+                setUrgentTasks(prev => [{
+                    id: `URG-${Date.now()}`,
+                    task: data.mission || 'High-priority dispatch',
+                    time: 'Immediate',
+                    priority: 'Critical',
+                    location: data.routeName || 'Dispatch Route',
+                    assignee: data.driver || 'Logistics Team'
+                }, ...prev]);
             }
 
             addLog({ action: 'Fleet Dispatch', detail: `Vehicle ${data.id} launched for ${data.mission}. Pilot: ${data.driver}`, type: 'system' });
@@ -2081,8 +2468,57 @@ export const GlobalDataProvider = ({ children }) => {
         }
     };
 
-    const addTracking = (t) => {
-        setTracking(prev => [{ ...t, id: `TRK-${Math.floor(500 + Math.random() * 99)}` }, ...prev]);
+    const TRACKING_ENDPOINTS = ['/logistics/tracking', '/tracking'];
+    const URGENT_ENDPOINTS = ['/logistics/urgent', '/logistics/urgent-tasks', '/support/urgent'];
+
+    const fetchTracking = React.useCallback(async () => {
+        if (trackingApiUnavailableRef.current) return;
+        for (const ep of TRACKING_ENDPOINTS) {
+            try {
+                const res = await api.get(ep);
+                if (res.data?.success || Array.isArray(res.data?.data) || Array.isArray(res.data)) {
+                    const rows = res.data?.success ? res.data.data : (Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []));
+                    setTracking((rows || []).map((t) => ({
+                        id: t.tracker_id || t.code || `TRK-${String(t.id || Date.now()).padStart(3, '0')}`,
+                        db_id: t.id || null,
+                        asset: t.asset || t.plate_number || t.vehicle || 'Assigned Vehicle',
+                        location: t.location || t.route || t.current_location || 'In Transit',
+                        signal: t.signal || t.signal_strength || 'Strong',
+                        eta: t.eta || t.estimated_time || 'Live',
+                        status: t.status || 'Active',
+                        deliveryId: t.delivery_id || t.deliveryId || null
+                    })));
+                    return;
+                }
+            } catch (_) { /* try next endpoint */ }
+        }
+        trackingApiUnavailableRef.current = true;
+        // Keep existing state if endpoint unavailable.
+    }, []);
+
+    const addTracking = async (t) => {
+        const payload = {
+            asset: t.asset,
+            location: t.location,
+            signal: t.signal || 'Strong',
+            eta: t.eta || null,
+            status: t.status || 'active',
+            delivery_id: t.deliveryId || null,
+            tracker_id: t.id || null
+        };
+        if (!trackingApiUnavailableRef.current) for (const ep of TRACKING_ENDPOINTS) {
+            try {
+                const res = await api.post(ep, payload);
+                if (res.data?.success || res.data?.data) {
+                    await fetchTracking();
+                    addLog({ action: 'Tracker Linked', detail: `Connected asset ${t.asset} to Geo-Spatial Network.`, type: 'system' });
+                    return;
+                }
+            } catch (_) { /* try next endpoint */ }
+        }
+        trackingApiUnavailableRef.current = true;
+        // Fallback to local state if API not available
+        setTracking(prev => [{ ...t, id: t.id || `TRK-${Math.floor(500 + Math.random() * 99)}` }, ...prev]);
         addLog({ action: 'Tracker Linked', detail: `Connected asset ${t.asset} to Geo-Spatial Network.`, type: 'system' });
     };
 
@@ -2280,11 +2716,38 @@ export const GlobalDataProvider = ({ children }) => {
             console.error("Failed to delete chauffeur request:", error);
         }
     };
-    const updateTracking = (updated) => {
+    const updateTracking = async (updated) => {
+        const payload = {
+            asset: updated.asset,
+            location: updated.location,
+            signal: updated.signal,
+            eta: updated.eta,
+            status: updated.status,
+            delivery_id: updated.deliveryId || null,
+            tracker_id: updated.id
+        };
+        if (!trackingApiUnavailableRef.current) for (const ep of TRACKING_ENDPOINTS) {
+            try {
+                await api.put(`${ep}/${encodeURIComponent(updated.db_id || updated.id)}`, payload);
+                await fetchTracking();
+                return;
+            } catch (_) { /* try next endpoint */ }
+        }
+        trackingApiUnavailableRef.current = true;
         setTracking(prev => prev.map(t => t.id === updated.id ? updated : t));
     };
 
-    const deleteTracking = (id) => {
+    const deleteTracking = async (id) => {
+        if (!trackingApiUnavailableRef.current) for (const ep of TRACKING_ENDPOINTS) {
+            try {
+                const row = tracking.find((t) => String(t.id) === String(id) || String(t.db_id) === String(id));
+                await api.delete(`${ep}/${encodeURIComponent(row?.db_id || id)}`);
+                await fetchTracking();
+                addLog({ action: 'Signal Severed', detail: `Decommissioned tracker ${id}.`, type: 'alert' });
+                return;
+            } catch (_) { /* try next endpoint */ }
+        }
+        trackingApiUnavailableRef.current = true;
         setTracking(prev => prev.filter(t => t.id !== id));
         addLog({ action: 'Signal Severed', detail: `Decommissioned tracker ${id}.`, type: 'alert' });
     };
@@ -2318,6 +2781,7 @@ export const GlobalDataProvider = ({ children }) => {
                     imageUrl: res.data.data.image_url
                 };
                 setEvents(prev => [newEvt, ...prev]);
+                await fetchTickets();
                 addLog({ action: 'Event Registry', detail: `New event request: ${event.title}`, type: 'system' });
             }
         } catch (error) {
@@ -2327,15 +2791,22 @@ export const GlobalDataProvider = ({ children }) => {
 
     const updateEvent = async (updated) => {
         try {
-            const reqData = {
-                name: updated.title,
-                event_date: updated.date,
-                location: updated.location,
-                client_id: updated.client_id || clients.find(c => c.name === updated.client)?.id,
-                status: updated.status
-            };
-            await api.put(`/support/events/${updated.id}`, reqData);
-            setEvents(prev => prev.map(e => e.id === updated.id ? updated : e));
+            const clientId = updated.client_id || clients.find(c => c.name === updated.client)?.id || null;
+            const formData = new FormData();
+            formData.append('name', updated.title || '');
+            formData.append('event_date', updated.date || '');
+            formData.append('location', updated.location || '');
+            formData.append('client_id', clientId || '');
+            formData.append('status', updated.status || 'planned');
+            formData.append('special_requests', updated.specialRequests || '');
+            formData.append('planner_name', updated.plannerName || '');
+            formData.append('guest_count', updated.guestCount || updated.guests || 0);
+            if (updated.imageFile) formData.append('image', updated.imageFile);
+
+            await api.put(`/support/events/${updated.id}`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            await fetchTickets();
             addLog({ action: 'Event Update', detail: `Synchronized details for ${updated.title}.`, type: 'system' });
         } catch (error) {
             console.error("Failed to update event:", error);
@@ -2356,23 +2827,6 @@ export const GlobalDataProvider = ({ children }) => {
 
     const [saasRequests, setSaasRequests] = useState([]);
 
-    const toggleAvailability = async (userId) => {
-        try {
-            const user = users.find(u => u.id === userId);
-            if (!user) return;
-
-            const newStatus = !user.isAvailable;
-            await api.put(`/staff/${userId}`, { is_available: newStatus });
-
-            setUsers(prev => prev.map(u => u.id === userId ? { ...u, isAvailable: newStatus } : u));
-            if (currentUser?.id === userId) {
-                setCurrentUser(prev => ({ ...prev, isAvailable: newStatus }));
-            }
-            addLog({ action: 'Status Update', detail: `${user.name} availability toggled to ${newStatus ? 'Active' : 'Offline'}.`, type: 'system' });
-        } catch (error) {
-            console.error("Failed to toggle availability:", error);
-        }
-    };
 
 
 
@@ -2432,9 +2886,16 @@ export const GlobalDataProvider = ({ children }) => {
 
     const addSupportTicket = async (ticket) => {
         try {
-            const res = await api.post('/support/tickets', ticket);
+            const payload = {
+                subject: ticket.subject,
+                category: ticket.category || 'General',
+                description: ticket.messages?.[0]?.text || '',
+                messages: ticket.messages,
+                priority: (ticket.priority || 'medium').toLowerCase()
+            };
+            const res = await api.post('/support/tickets', payload);
             if (res.data?.success) {
-                setSupportTickets(prev => [res.data.data, ...prev]);
+                await fetchTickets();
                 addLog({ action: 'Ticket Creation', detail: `Ticket opened: ${ticket.subject}`, type: 'system' });
             }
         } catch (error) {
@@ -2442,13 +2903,29 @@ export const GlobalDataProvider = ({ children }) => {
         }
     };
 
-    const updateSupportTicket = async (id, status) => {
+    const updateSupportTicket = async (ticketOrId, status = null) => {
         try {
-            await api.patch(`/support/tickets/${id}/status`, { status });
-            setSupportTickets(prev => prev.map(t => t.id === id ? { ...t, status } : t));
-            addLog({ action: 'Ticket Resolution', detail: `Updated ticket ${id} to ${status}`, type: 'system' });
+            let id, payload;
+            if (typeof ticketOrId === 'object') {
+                id = ticketOrId.db_id || ticketOrId.id;
+                // Strip prefix if needed
+                if (typeof id === 'string' && id.includes('-')) id = id.split('-')[1];
+                
+                payload = {
+                    status: (ticketOrId.status || 'open').toLowerCase().replace(' ', '_'),
+                    messages: ticketOrId.messages
+                };
+            } else {
+                id = ticketOrId;
+                if (typeof id === 'string' && id.includes('-')) id = id.split('-')[1];
+                payload = { status: status.toLowerCase().replace(' ', '_') };
+            }
+
+            await api.patch(`/support/tickets/${id}/status`, payload);
+            await fetchTickets();
+            addLog({ action: 'Ticket Update', detail: `Synchronized support ticket ${id}.`, type: 'system' });
         } catch (error) {
-            console.error("Failed to update ticket status:", error);
+            console.error("Failed to update ticket:", error);
         }
     };
 
@@ -2528,26 +3005,97 @@ export const GlobalDataProvider = ({ children }) => {
 
     const addLeaveRequest = async (requestData) => {
         try {
-            const res = await api.post('/staff/leave', requestData);
+            const payload = {
+                user_id: requestData.userId,
+                company_id: currentUser?.company_id,
+                leave_type: requestData.type,
+                start_date: requestData.start,
+                end_date: requestData.end,
+                reason: requestData.reason || 'No reason provided'
+            };
+            const res = await api.post('/staff/leave', payload);
             if (res.data?.success) {
                 await fetchLeaveRequests();
-                addLog({ action: 'Leave Requested', detail: `Submitted leave request.`, type: 'system' });
+                addLog({ action: 'Leave Requested', detail: `Submitted ${requestData.type} request.`, type: 'system' });
             }
         } catch (error) {
             console.error("Failed to add leave request:", error);
         }
     };
 
-    const addUrgentTask = (task) => {
-        setUrgentTasks(prev => [{ ...task, id: Date.now() }, ...prev]);
-        addLog({ action: 'Urgent Task Logged', detail: task.title, type: 'alert' });
+    const fetchUrgentTasks = React.useCallback(async () => {
+        if (urgentApiUnavailableRef.current) return;
+        for (const ep of URGENT_ENDPOINTS) {
+            try {
+                const res = await api.get(ep);
+                if (res.data?.success || Array.isArray(res.data?.data) || Array.isArray(res.data)) {
+                    const rows = res.data?.success ? res.data.data : (Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : []));
+                    setUrgentTasks((rows || []).map((t) => ({
+                        id: t.id || `URG-${Date.now()}`,
+                        task: t.task || t.title || t.name || 'Urgent Mission',
+                        time: t.time || t.time_label || t.deadline || 'Immediate',
+                        priority: t.priority || 'Critical',
+                        location: t.location || t.route || 'N/A',
+                        assignee: t.assignee || t.owner || 'Pending'
+                    })));
+                    return;
+                }
+            } catch (_) { /* try next endpoint */ }
+        }
+        urgentApiUnavailableRef.current = true;
+    }, []);
+
+    const addUrgentTask = async (task) => {
+        const payload = {
+            task: task.task || task.title || 'Urgent Mission',
+            time: task.time || 'Immediate',
+            priority: task.priority || 'Critical',
+            location: task.location || '',
+            assignee: task.assignee || 'Pending'
+        };
+        if (!urgentApiUnavailableRef.current) for (const ep of URGENT_ENDPOINTS) {
+            try {
+                const res = await api.post(ep, payload);
+                if (res.data?.success || res.data?.data) {
+                    await fetchUrgentTasks();
+                    addLog({ action: 'Urgent Task Logged', detail: payload.task, type: 'alert' });
+                    return;
+                }
+            } catch (_) { /* try next endpoint */ }
+        }
+        urgentApiUnavailableRef.current = true;
+        setUrgentTasks(prev => [{ ...payload, id: task.id || `URG-${Date.now()}` }, ...prev]);
+        addLog({ action: 'Urgent Task Logged', detail: payload.task, type: 'alert' });
     };
 
-    const updateUrgentTask = (updated) => {
+    const updateUrgentTask = async (updated) => {
+        const payload = {
+            task: updated.task,
+            time: updated.time,
+            priority: updated.priority,
+            location: updated.location,
+            assignee: updated.assignee
+        };
+        if (!urgentApiUnavailableRef.current) for (const ep of URGENT_ENDPOINTS) {
+            try {
+                await api.put(`${ep}/${encodeURIComponent(updated.id)}`, payload);
+                await fetchUrgentTasks();
+                return;
+            } catch (_) { /* try next endpoint */ }
+        }
+        urgentApiUnavailableRef.current = true;
         setUrgentTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
     };
 
-    const deleteUrgentTask = (id) => {
+    const deleteUrgentTask = async (id) => {
+        if (!urgentApiUnavailableRef.current) for (const ep of URGENT_ENDPOINTS) {
+            try {
+                await api.delete(`${ep}/${encodeURIComponent(id)}`);
+                await fetchUrgentTasks();
+                return;
+            } catch (_) { /* try next endpoint */ }
+        }
+        urgentApiUnavailableRef.current = true;
         setUrgentTasks(prev => prev.filter(t => t.id !== id));
     };
 
@@ -2602,6 +3150,7 @@ export const GlobalDataProvider = ({ children }) => {
 
             // Staff & Assignments
             users, setUsers, fetchStaff, addUser, updateUser, deleteUser, toggleAvailability, reviewStaff,
+            customerUsers, fetchCustomerUsers,
             staffAssignments, addStaffAssignment, updateAssignment, fetchSupportingDocs,
             clockIn, clockOut,
             payHistory, setPayHistory, fetchPayHistory, recordWorkSession, getVacationBalance, workStatusOptions: ['Probation', 'Full Time', 'Part Time', 'Inactive'],
@@ -2610,7 +3159,7 @@ export const GlobalDataProvider = ({ children }) => {
             // Inventory
             inventory, setInventory, fetchInventory, addInventory, updateInventory, deleteInventory, issueInventory, recordLoss, fetchInventoryAlerts, inventoryAlerts,
             luxuryItems, setLuxuryItems, fetchLuxuryItems, addLuxuryItem, updateLuxuryItem, deleteLuxuryItem,
-            stockMovements, addStockEntry, issueStock, warehouses: [], fetchWarehouses, addWarehouse, updateWarehouse, deleteWarehouse,
+            stockMovements, addStockEntry, issueStock,
 
             // Procurement
             vendors, setVendors, fetchVendors, addVendor, updateVendor, deleteVendor,
@@ -2628,8 +3177,8 @@ export const GlobalDataProvider = ({ children }) => {
             fleet, setFleet, fetchFleet, addFleet, updateFleet, deleteFleet, dispatchVehicle,
             deliveries, setDeliveries, fetchDeliveries, addDelivery, updateDelivery, deleteDelivery, confirmDeliveryReceipt,
             routes, setRoutes, fetchRoutes, addRoute, updateRoute, deleteRoute,
-            urgentTasks, addUrgentTask, updateUrgentTask, deleteUrgentTask,
-            deliveryPricing, updateDeliveryPricing: updateDeliveryPricingTier, tracking, addTracking, updateTracking, deleteTracking,
+            urgentTasks, fetchUrgentTasks, addUrgentTask, updateUrgentTask, deleteUrgentTask,
+            deliveryPricing, updateDeliveryPricing: updateDeliveryPricingTier, tracking, fetchTracking, addTracking, updateTracking, deleteTracking,
             warehouses, setWarehouses, fetchWarehouses, addWarehouse, updateWarehouse, deleteWarehouse,
 
             // Concierge & Support

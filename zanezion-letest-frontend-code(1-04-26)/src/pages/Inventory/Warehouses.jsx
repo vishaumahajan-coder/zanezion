@@ -5,17 +5,18 @@ import { Warehouse as WarehouseIcon, MapPin, Plus, Package, Store } from 'lucide
 import { useData } from '../../context/GlobalDataContext';
 
 const Warehouses = () => {
-  const { warehouses, addWarehouse, updateWarehouse, deleteWarehouse, fetchWarehouses, hasMenuPermission } = useData();
-  
+  const { warehouses, addWarehouse, updateWarehouse, deleteWarehouse, fetchWarehouses, hasMenuPermission, users, fetchStaff } = useData();
+
   React.useEffect(() => {
     fetchWarehouses();
-  }, [fetchWarehouses]);
+    fetchStaff();
+  }, [fetchWarehouses, fetchStaff]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('view');
   const [selectedWarehouse, setSelectedWarehouse] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [formData, setFormData] = useState({ name: '', location: '', capacity: 0, manager: '', status: 'active' });
+  const [formData, setFormData] = useState({ name: '', location: '', capacity: 0, manager_id: '', status: 'active' });
 
   const filteredWarehouses = warehouses.filter(wh =>
     wh.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -26,7 +27,10 @@ const Warehouses = () => {
   const handleAction = (type, wh) => {
     setSelectedWarehouse(wh);
     setModalType(type);
-    setFormData(wh.id ? { ...wh } : { name: '', location: '', capacity: 0, manager: '', status: 'active' });
+    setFormData(wh.id ? {
+      ...wh,
+      manager_id: wh.manager_id || ''
+    } : { name: '', location: '', capacity: 0, manager_id: '', status: 'active' });
     setIsModalOpen(true);
   };
 

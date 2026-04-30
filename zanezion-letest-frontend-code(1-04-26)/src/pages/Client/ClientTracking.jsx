@@ -24,22 +24,31 @@ const ClientTracking = () => {
             (currentUser?.name && c.name?.toLowerCase() === currentUser?.name?.toLowerCase())
         );
 
-    // For customer role: backend already filters by company_id, show all returned deliveries
-    // For other roles: match by client record
+    // For customer role: filter by personal details
+    // For other roles: filter by client/company association
     const myOrderIds = (orders || [])
-        .filter(o => isCustomerRole || (myClient && (o.companyId === myClient.id || o.company_id === myClient.id || o.clientId === myClient.id)))
+        .filter(o => {
+            if (myClient && (o.companyId === myClient.id || o.company_id === myClient.id || o.clientId === myClient.id)) return true;
+            if (isCustomerRole) {
+                return (
+                    o.email?.toLowerCase() === currentUser?.email?.toLowerCase() || 
+                    o.client?.toLowerCase() === currentUser?.name?.toLowerCase() ||
+                    String(o.customer_id) === String(currentUser?.id)
+                );
+            }
+            return false;
+        })
         .map(o => o.id);
 
-    const myDeliveries = isCustomerRole
-        ? (deliveries || [])
-        : (deliveries || []).filter(d =>
-            myClient && (
-                myOrderIds.includes(d.orderId) ||
-                myOrderIds.includes(d.order_id) ||
-                d.clientId === myClient.id ||
-                d.client === myClient.name
-            )
+    const myDeliveries = (deliveries || []).filter(d => {
+        const orderMatch = myOrderIds.includes(d.order_id_raw);
+        const clientMatch = myClient && (d.clientId === myClient.id || d.client === myClient.name);
+        const personalMatch = isCustomerRole && (
+            d.client?.toLowerCase() === currentUser?.name?.toLowerCase() || 
+            d.email?.toLowerCase() === currentUser?.email?.toLowerCase()
         );
+        return orderMatch || clientMatch || personalMatch;
+    });
 
     const handleConfirmSubmit = () => {
         if (confirmModal.name.trim()) {

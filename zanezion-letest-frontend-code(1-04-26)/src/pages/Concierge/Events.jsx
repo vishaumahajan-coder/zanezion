@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { swalSuccess, swalError, swalWarning, swalInfo, swalConfirm, swalCredentials, swalCopied } from '../../utils/swal';
 import Table from '../../components/Table';
 import Modal from '../../components/Modal';
@@ -7,14 +7,70 @@ import { useData } from '../../context/GlobalDataContext';
 import CustomDatePicker from '../../components/CustomDatePicker';
 
 const BACKEND_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace('/api', '');
+const toAbsoluteImageUrl = (rawPath) => {
+  if (!rawPath) return null;
+  if (String(rawPath).startsWith('http')) return rawPath;
+  return `${BACKEND_URL}${String(rawPath).startsWith('/') ? '' : '/'}${rawPath}`;
+};
 
 const Events = () => {
-  const { events, addEvent, updateEvent, deleteEvent, fetchTickets, fetchClients, clients, hasMenuPermission } = useData();
+  const {
+    events,
+    addEvent,
+    updateEvent,
+    deleteEvent,
+    fetchTickets,
+    fetchClients,
+    clients,
+    customerUsers = [],
+    fetchCustomerUsers,
+    hasMenuPermission,
+    currentUser
+  } = useData();
+  const userRole = (currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
+  const canAddEvent = hasMenuPermission('Events', 'can_add') || ['concierge', 'admin', 'super_admin', 'superadmin'].includes(userRole);
 
   React.useEffect(() => {
     fetchTickets();
     fetchClients();
-  }, []);
+    if (fetchCustomerUsers) fetchCustomerUsers();
+  }, [fetchTickets, fetchClients, fetchCustomerUsers]);
+
+  // Concierge should see tenant clients + signup customers (personal/business).
+  const clientOptions = useMemo(() => {
+    const ownCompanyId = currentUser?.company_id || currentUser?.companyId || null;
+    const byCompany = (row) => {
+      if (!ownCompanyId) return true;
+      const rowCompany = row.company_id || row.companyId || row.client_id || row.clientId || null;
+      if (rowCompany == null || rowCompany === '') return true;
+      return String(rowCompany) === String(ownCompanyId);
+    };
+
+    const fromClients = (clients || [])
+      .filter(byCompany)
+      .map((c) => ({
+        id: c.id,
+        label: c.name || c.business_name || c.companyName || `Client ${c.id}`,
+        email: c.email || '',
+      }));
+
+    const fromCustomerUsers = (customerUsers || [])
+      .filter(byCompany)
+      .map((u) => ({
+        id: u.id,
+        label: u.name || u.full_name || u.client_name || `Client ${u.id}`,
+        email: u.email || '',
+      }));
+
+    const merged = [...fromClients, ...fromCustomerUsers];
+    const seen = new Set();
+    return merged.filter((o) => {
+      const key = `${o.id}::${o.label}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [clients, customerUsers, currentUser?.company_id, currentUser?.companyId]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('view');
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -35,7 +91,7 @@ const Events = () => {
     setFormData(evt.id ? { ...evt } : { title: '', client: '', client_id: '', date: '', location: '', status: 'Planning', guestCount: 0, plannerName: '', specialRequests: '' });
     setImageFile(null);
     const imgPath = evt.imageUrl || evt.image_url || null;
-    setImagePreview(imgPath ? (imgPath.startsWith('http') ? imgPath : `${BACKEND_URL}${imgPath}`) : null);
+    setImagePreview(toAbsoluteImageUrl(imgPath));
     setIsModalOpen(true);
   };
 
@@ -104,7 +160,7 @@ const Events = () => {
             />
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
           </div>
-          {hasMenuPermission('Events', 'can_add') && (
+          {canAddEvent && (
             <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
               <Plus size={16} /> Schedule Event
             </button>
@@ -178,17 +234,22 @@ const Events = () => {
                   <select
                     value={formData.client_id || ''}
                     onChange={(e) => {
-                      const selected = (clients || []).find(c => String(c.id) === e.target.value);
-                      setFormData({ ...formData, client_id: e.target.value, client: selected?.name || selected?.business_name || '' });
+                      const selected = clientOptions.find(c => String(c.id) === String(e.target.value));
+                      setFormData({ ...formData, client_id: e.target.value, client: selected?.label || '' });
                     }}
                     className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
                     disabled={modalType === 'view'}
                   >
                     <option value="">Select Client...</option>
-                    {(clients || []).map(c => (
-                      <option key={c.id} value={c.id}>{c.name || c.business_name} {c.email ? `(${c.email})` : ''}</option>
+                    {clientOptions.map(c => (
+                      <option key={c.id} value={c.id}>{c.label} {c.email ? `(${c.email})` : ''}</option>
                     ))}
                   </select>
+                  {clientOptions.length === 0 && (
+                    <p className="text-[10px] text-warning mt-1">
+                      No clients found for your company. Ask admin to create clients/customers first.
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-1">

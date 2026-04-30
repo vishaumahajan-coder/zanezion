@@ -9,13 +9,15 @@ import CustomDatePicker from '../../components/CustomDatePicker';
 import StatusBadge from '../../components/StatusBadge';
 
 const Inventory = () => {
-  const { inventory, addInventory, updateInventory, deleteInventory, users, currentUser, vendors, stockMovements, addStockEntry, issueStock, projects, purchaseRequests, addPurchaseRequest, updateProject, recordLoss, clients, fetchInventory, fetchClients, fetchVendors, hasMenuPermission } = useData();
+  const { inventory, addInventory, updateInventory, deleteInventory, users, currentUser, vendors, stockMovements, addStockEntry, issueStock, projects, purchaseRequests, addPurchaseRequest, updateProject, recordLoss, clients, fetchInventory, fetchClients, fetchVendors, hasMenuPermission, warehouses, fetchWarehouses, fetchPurchaseRequests } = useData();
 
   React.useEffect(() => {
     fetchInventory();
     fetchClients();
     fetchVendors();
-  }, [fetchInventory, fetchClients, fetchVendors]);
+    fetchWarehouses();
+    fetchPurchaseRequests();
+  }, [fetchInventory, fetchClients, fetchVendors, fetchWarehouses, fetchPurchaseRequests]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('view'); // view, entry, issue, loss
   const [selectedItem, setSelectedItem] = useState(null);
@@ -23,7 +25,8 @@ const Inventory = () => {
     item: '',
     qty: 0,
     price: 0,
-    warehouse: 'Warehouse A',
+    warehouse: (warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage',
+    warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
     category: '',
     vendor: '',
     client: '',
@@ -73,7 +76,8 @@ const Inventory = () => {
           item: prContext.item || (prContext.items && prContext.items[0]?.name) || '',
           qty: prContext.qty || (prContext.items && prContext.items[0]?.qty) || '',
           price: prContext.price || (prContext.items && prContext.items[0]?.price) || '',
-          warehouse: 'Warehouse A',
+          warehouse: (warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage',
+          warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
           category: prContext.category || 'General',
           vendor: prContext.vendor || '',
           issuedBy: currentUser?.name || '',
@@ -82,28 +86,51 @@ const Inventory = () => {
           clientId: ''
         });
       } else {
-        setFormData({ item: '', qty: '', price: '', warehouse: 'Warehouse A', category: 'General', vendor: '', issuedBy: currentUser?.name || '', inventoryType: 'Marketplace', clientId: '' });
+        setFormData({
+          item: '',
+          qty: '',
+          price: '',
+          warehouse: (warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage',
+          warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
+          category: 'General',
+          vendor: '',
+          issuedBy: currentUser?.name || '',
+          inventoryType: 'Marketplace',
+          clientId: ''
+        });
       }
     } else if (type === 'issue') {
+      const whName = item?.location || ((warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage');
+      const wh = warehouses.find(w => w.name === whName);
       setFormData({
         item: item?.name || '',
         qty: item?.qty || '',
         client: item?.client || '',
-        warehouse: item?.location || 'Warehouse A',
+        warehouse: whName,
+        warehouseId: wh ? wh.id : (item?.warehouse_id || null),
         issuedBy: currentUser?.name || '',
         projectRef: projectContext?.id || null
       });
     } else if (type === 'loss') {
+      const whName = item?.location || ((warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage');
+      const wh = warehouses.find(w => w.name === whName);
       setFormData({
         item: item?.name || '',
         qty: '',
-        warehouse: item?.location || 'Warehouse A',
+        warehouse: whName,
+        warehouseId: wh ? wh.id : (item?.warehouse_id || null),
         reason: '',
         issuedBy: currentUser?.name || ''
       });
     }
     else {
-      setFormData(item);
+      const whName = item?.location || item?.warehouse || ((warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage');
+      const wh = warehouses.find(w => w.name === whName);
+      setFormData({
+        ...item,
+        warehouse: whName,
+        warehouseId: wh ? wh.id : (item?.warehouse_id || null)
+      });
     }
     setIsModalOpen(true);
   };
@@ -488,24 +515,28 @@ const Inventory = () => {
           <div className="glass-card p-6">
             <h3 className="text-sm font-black text-white uppercase tracking-widest mb-4">Capacity Utilization</h3>
             <div className="space-y-4">
-              {[
-                { name: "Warehouse A", capacity: Math.min(100, (inventory.filter(i => i.location === 'Warehouse A').length / 20) * 100) },
-                { name: "Warehouse B", capacity: Math.min(100, (inventory.filter(i => i.location === 'Warehouse B').length / 20) * 100) },
-                { name: "Cold Storage", capacity: Math.min(100, (inventory.filter(i => i.location === 'Cold Storage').length / 20) * 100) },
-              ].map((wh, idx) => (
-                <div key={idx}>
-                  <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-muted mb-2">
-                    <span>{wh.name}</span>
-                    <span className="text-white">{wh.capacity.toFixed(0)}%</span>
+              {warehouses.length > 0 ? warehouses.slice(0, 3).map((wh, idx) => {
+                const whInventory = inventory.filter(i => i.location === wh.name);
+                const occupancy = wh.capacity > 0 ? (whInventory.length / wh.capacity) * 100 : 0;
+                const capacityValue = Math.min(100, occupancy || (whInventory.length / 50 * 100)); // fallback logic
+                
+                return (
+                  <div key={idx}>
+                    <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-muted mb-2">
+                      <span>{wh.name}</span>
+                      <span className="text-white">{capacityValue.toFixed(0)}%</span>
+                    </div>
+                    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-1000 ${capacityValue > 80 ? 'bg-danger' : capacityValue > 60 ? 'bg-warning' : 'bg-accent'}`}
+                        style={{ width: `${capacityValue}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-1000 ${wh.capacity > 80 ? 'bg-danger' : wh.capacity > 60 ? 'bg-warning' : 'bg-accent'}`}
-                      style={{ width: `${wh.capacity}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              }) : (
+                <p className="text-xs text-secondary italic">No warehouse hubs detected.</p>
+              )}
             </div>
           </div>
         </div>
@@ -652,12 +683,18 @@ const Inventory = () => {
                 <label className="text-[10px] font-black text-muted uppercase tracking-widest">Warehouse</label>
                 <select
                   value={formData.warehouse}
-                  onChange={(e) => setFormData({ ...formData, warehouse: e.target.value })}
-                  className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    const wh = warehouses.find(w => w.name === name);
+                    setFormData({ ...formData, warehouse: name, warehouseId: wh ? wh.id : null });
+                  }}
+                  className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white shadow-xl shadow-black/20"
                 >
-                  <option>Warehouse A</option>
-                  <option>Warehouse B</option>
-                  <option>Cold Storage</option>
+                  {warehouses.length > 0 ? (
+                    warehouses.map(wh => <option key={wh.id} value={wh.name}>{wh.name}</option>)
+                  ) : (
+                    <option>General Storage</option>
+                  )}
                 </select>
               </div>
               <div className="space-y-1">
@@ -709,11 +746,13 @@ const Inventory = () => {
                 <select
                   value={formData.warehouse}
                   onChange={(e) => setFormData({ ...formData, warehouse: e.target.value })}
-                  className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                  className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white shadow-xl shadow-black/20"
                 >
-                  <option>Warehouse A</option>
-                  <option>Warehouse B</option>
-                  <option>Cold Storage</option>
+                  {warehouses.length > 0 ? (
+                    warehouses.map(wh => <option key={wh.id} value={wh.name}>{wh.name}</option>)
+                  ) : (
+                    <option>General Storage</option>
+                  )}
                 </select>
               </div>
               <div className="space-y-1 col-span-1 md:col-span-2">
@@ -850,10 +889,10 @@ const Inventory = () => {
                     className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
                     disabled={modalType === 'view'}
                   >
-                    <option>Warehouse A</option>
-                    <option>Warehouse B</option>
-                    <option>Cold Storage 1</option>
-                    <option>Silo 4</option>
+                    <option value="">Select Warehouse...</option>
+                    {warehouses.map(wh => (
+                      <option key={wh.id} value={wh.name}>{wh.name}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="space-y-1">

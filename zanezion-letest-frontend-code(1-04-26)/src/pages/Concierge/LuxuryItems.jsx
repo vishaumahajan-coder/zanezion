@@ -5,7 +5,9 @@ import { Shield, Plus, Search, DollarSign, User, Anchor, Lock, RefreshCw } from 
 import { useData } from '../../context/GlobalDataContext';
 
 const LuxuryItems = () => {
-    const { luxuryItems, addLuxuryItem, updateLuxuryItem, deleteLuxuryItem, fetchLuxuryItems, hasMenuPermission } = useData();
+    const { luxuryItems, addLuxuryItem, updateLuxuryItem, deleteLuxuryItem, fetchLuxuryItems, hasMenuPermission, currentUser } = useData();
+    const userRole = (currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
+    const canAddLuxury = hasMenuPermission('Luxury Items', 'can_add') || ['concierge', 'admin', 'super_admin', 'superadmin'].includes(userRole);
     
     React.useEffect(() => {
         fetchLuxuryItems();
@@ -62,26 +64,56 @@ const LuxuryItems = () => {
         },
     ];
 
+    const totalValue = luxuryItems.reduce((sum, itm) => {
+        const val = parseFloat(String(itm.value || 0).replace(/[^0-9.]/g, ''));
+        return sum + (isNaN(val) ? 0 : val);
+    }, 0);
+
+    const activeTransfers = luxuryItems.filter(itm => itm.status === 'Transferred' || itm.status === 'In Use').length;
+
+    const stats = [
+        { 
+            label: 'Total Assets Under Custody', 
+            value: `$${(totalValue / 1000000).toFixed(1)}M`, 
+            subValue: `$${totalValue.toLocaleString()}`,
+            icon: Shield, 
+            color: 'text-accent',
+            status: 'Secured'
+        },
+        { 
+            label: 'Active Transfers', 
+            value: `${activeTransfers} Items`, 
+            icon: Anchor, 
+            color: 'text-secondary' 
+        },
+        { 
+            label: 'Insurance Sync', 
+            value: totalValue > 0 ? 'Active' : 'Idle', 
+            icon: RefreshCw, 
+            color: 'text-success' 
+        }
+    ];
+
     return (
         <div className="space-y-8">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Luxury Asset Vault</h1>
-                    <p className="text-secondary mt-1">Institutional custody and secure storage for high-value client assets.</p>
+                    <h1 className="text-3xl font-bold tracking-tight text-white font-heading italic">Luxury Asset Vault</h1>
+                    <p className="text-secondary mt-1 text-sm uppercase tracking-widest font-black opacity-70 italic">Institutional custody and secure storage for high-value client assets.</p>
                 </div>
                 <div className="flex gap-3">
                     <div className="relative">
                         <input
                             type="text"
                             placeholder="Search assets..."
-                            className="bg-white/5 border border-border rounded-xl py-2 px-10 text-sm focus:outline-none focus:border-accent w-64"
+                            className="bg-white/5 border border-white/10 rounded-xl py-2 px-10 text-sm focus:outline-none focus:border-accent w-64 font-bold"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
                     </div>
-                    {hasMenuPermission('Luxury Items', 'can_add') && (
-                        <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
+                    {canAddLuxury && (
+                        <button className="btn-primary flex items-center gap-2 px-6" onClick={() => handleAction('add', {})}>
                             <Lock size={16} /> New Entry
                         </button>
                     )}
@@ -89,34 +121,20 @@ const LuxuryItems = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="glass-card p-6 bg-accent/[0.03] border-accent/20">
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="p-3 bg-accent/20 rounded-2xl text-accent">
-                            <Shield size={24} />
+                {stats.map((s, i) => (
+                    <div key={i} className={`glass-card p-6 border-white/5 relative overflow-hidden group ${i === 0 ? 'bg-accent/[0.03] border-accent/20' : ''}`}>
+                        <div className="flex justify-between items-start mb-4 relative z-10">
+                            <div className={`p-3 rounded-2xl ${i === 0 ? 'bg-accent/20 text-accent' : 'bg-white/5 text-secondary'}`}>
+                                <s.icon size={24} />
+                            </div>
+                            {s.status && <span className="text-[10px] font-black text-success uppercase bg-success/10 px-2 py-1 rounded tracking-widest">{s.status}</span>}
                         </div>
-                        <span className="text-[10px] font-bold text-success uppercase bg-success/10 px-2 py-1 rounded">Secured</span>
+                        <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em] mb-1 relative z-10">{s.label}</p>
+                        <p className="text-3xl font-black italic font-heading relative z-10">{s.value}</p>
+                        {s.subValue && <p className="text-[10px] font-bold text-secondary mt-1 opacity-60">{s.subValue}</p>}
+                        <s.icon className={`absolute -right-4 -bottom-4 w-24 h-24 opacity-[0.03] ${s.color} group-hover:scale-110 transition-transform`} />
                     </div>
-                    <p className="text-xs text-secondary uppercase font-bold mb-1">Total Assets Under Custody</p>
-                    <p className="text-3xl font-bold font-heading italic">$8.4M</p>
-                </div>
-                <div className="glass-card p-6 border-accent/10">
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="p-3 bg-white/5 rounded-2xl text-secondary">
-                            <Anchor size={24} />
-                        </div>
-                    </div>
-                    <p className="text-xs text-secondary uppercase font-bold mb-1">Active Transfers</p>
-                    <p className="text-3xl font-bold">3 Items</p>
-                </div>
-                <div className="glass-card p-6 border-accent/10">
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="p-3 bg-white/5 rounded-2xl text-secondary">
-                            <RefreshCw size={24} />
-                        </div>
-                    </div>
-                    <p className="text-xs text-secondary uppercase font-bold mb-1">Insurance Sync</p>
-                    <p className="text-3xl font-bold text-success">Active</p>
-                </div>
+                ))}
             </div>
 
             <div className="glass-card p-6">

@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import Modal from './Modal';
-import { Calendar, User, Package, ClipboardList, Plus, Trash2, Tag, DollarSign } from 'lucide-react';
+import { Calendar, User, Package, ClipboardList, Plus, Trash2, Tag, DollarSign, CheckCircle, XCircle } from 'lucide-react';
 import CustomDatePicker from './CustomDatePicker';
+import { useData } from '../context/GlobalDataContext';
 
 const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'add' }) => {
+  const { currentUser } = useData();
+  const userRole = (currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
+  const isAdmin = ['admin', 'super_admin', 'procurement'].includes(userRole);
+
   const [formData, setFormData] = useState({
     requestId: 'REQ-' + Math.floor(100 + Math.random() * 900),
     items: [{ name: '', qty: 1, price: 0 }],
@@ -20,7 +25,6 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
   useEffect(() => {
     if (isOpen) {
       if (selectedRequest && (modalType === 'edit' || modalType === 'view')) {
-        // Normalize items: handle cases where it might be a single item or an array
         let normalizedItems = [];
         if (selectedRequest.items && Array.isArray(selectedRequest.items)) {
           normalizedItems = [...selectedRequest.items];
@@ -79,8 +83,13 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
   };
 
   const handleSubmit = (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     onSave({ ...formData, total: parseFloat(calculateTotal()) });
+  };
+
+  const handleStatusChange = (newStatus) => {
+    const updatedData = { ...formData, status: newStatus, total: parseFloat(calculateTotal()) };
+    onSave(updatedData);
   };
 
   const isView = modalType === 'view';
@@ -99,103 +108,94 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-muted uppercase">Request ID</label>
+            <label className="text-[10px] font-bold text-muted uppercase">Requester Profile</label>
             <div className="relative">
-              <ClipboardList className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14} />
-              <input
-                type="text"
-                value={formData.requestId}
-                className="w-full bg-background border border-border rounded-lg pl-10 pr-4 py-2 text-sm focus:border-accent outline-none"
-                disabled
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-muted uppercase">Requester</label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14} />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
               <input
                 type="text"
                 value={formData.requester}
                 onChange={(e) => setFormData({ ...formData, requester: e.target.value })}
-                placeholder="Enter requester name"
-                className="w-full bg-background border border-border rounded-lg pl-10 pr-4 py-2 text-sm focus:border-accent outline-none font-bold text-primary disabled:opacity-50"
-                required
+                placeholder="Name or Department ID"
+                className="w-full bg-background border border-border rounded-lg py-2 pl-10 pr-4 text-sm focus:border-accent outline-none font-bold disabled:opacity-50"
                 disabled={isView}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-muted uppercase">Asset Manifest</label>
+            <div className="relative">
+              <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
+              <input
+                type="text"
+                value={formData.items.length === 1 ? formData.items[0].name : `${formData.items.length} Multiple Assets`}
+                readOnly
+                placeholder="Items specified below"
+                className="w-full bg-background border border-border rounded-lg py-2 pl-10 pr-4 text-sm focus:border-accent outline-none font-bold opacity-70"
               />
             </div>
           </div>
 
           <div className="col-span-1 md:col-span-2 space-y-3">
             <div className="flex items-center justify-between">
-              <label className="text-[10px] font-bold text-muted uppercase">Items Requested</label>
+              <label className="text-[10px] font-bold text-muted uppercase">Line Item Specifications</label>
               {!isView && (
-                <button type="button" onClick={handleAddItem} className="flex items-center gap-1 text-[10px] font-bold text-accent hover:text-white transition-colors">
-                  <Plus size={12} /> Add Line Item
+                <button type="button" onClick={handleAddItem} className="text-accent hover:text-accent/80 text-xs font-bold flex items-center gap-1">
+                  <Plus size={14} /> Add Item
                 </button>
               )}
             </div>
-
-            <div className="space-y-2">
+            <div className="space-y-3">
               {formData.items.map((item, index) => (
-                <div key={index} className="flex gap-2 items-start w-full">
-                  <div className="w-full sm:flex-[3] lg:flex-[4] min-w-[150px] sm:min-w-[200px] space-y-1">
-                    <div className="relative">
-                      <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={12} />
-                      <input
-                        type="text"
-                        value={item.name}
-                        onChange={(e) => handleItemChange(index, 'name', e.target.value)}
-                        placeholder="Item Name"
-                        className="w-full bg-background border border-border rounded-lg pl-9 pr-4 py-2 text-xs focus:border-accent outline-none disabled:opacity-50 text-white font-bold"
-                        required
-                        disabled={isView}
-                      />
-                    </div>
+                <div key={index} className="flex gap-3 items-end bg-white/5 p-3 rounded-lg border border-border/50">
+                  <div className="flex-1 space-y-1">
+                    <label className="text-[9px] text-muted uppercase">Item Name</label>
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={(e) => handleItemChange(index, 'name', e.target.value)}
+                      className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none"
+                      disabled={isView}
+                      required
+                    />
                   </div>
                   <div className="w-20 space-y-1">
+                    <label className="text-[9px] text-muted uppercase">Qty</label>
                     <input
                       type="number"
                       value={item.qty}
                       onChange={(e) => handleItemChange(index, 'qty', e.target.value)}
-                      placeholder="Qty"
-                      className="w-full bg-background border border-border rounded-lg px-2 py-2 text-xs focus:border-accent outline-none disabled:opacity-50 text-white font-bold text-center"
-                      min="1"
-                      required
+                      className="w-full bg-background border border-border rounded-lg px-3 py-1.5 text-xs focus:border-accent outline-none"
                       disabled={isView}
+                      required
                     />
                   </div>
-                  <div className="w-24 space-y-1">
+                  <div className="w-28 space-y-1">
+                    <label className="text-[9px] text-muted uppercase">Est. Price</label>
                     <div className="relative">
                       <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" size={12} />
                       <input
                         type="number"
                         value={item.price}
                         onChange={(e) => handleItemChange(index, 'price', e.target.value)}
-                        placeholder="Price"
-                        className="w-full bg-background border border-border rounded-lg pl-6 pr-2 py-2 text-xs focus:border-accent outline-none disabled:opacity-50 text-accent font-bold"
-                        step="0.01"
-                        required
+                        className="w-full bg-background border border-border rounded-lg pl-6 pr-3 py-1.5 text-xs focus:border-accent outline-none"
                         disabled={isView}
                       />
                     </div>
                   </div>
-                  {formData.items.length > 1 && !isView && (
-                    <button type="button" onClick={() => handleRemoveItem(index)} className="p-2 text-danger hover:bg-danger/10 rounded-lg transition-colors">
-                      <Trash2 size={14} />
+                  {!isView && (
+                    <button type="button" onClick={() => handleRemoveItem(index)} className="p-2 text-red-400 hover:bg-red-400/10 rounded-lg transition-colors">
+                      <Trash2 size={16} />
                     </button>
                   )}
                 </div>
               ))}
             </div>
-
-            <div className="flex justify-end pt-2">
-              <div className="text-right">
-                <p className="text-[10px] font-bold text-muted uppercase">Estimated Total</p>
-                <p className="text-lg font-bold text-accent">${calculateTotal()}</p>
-              </div>
+            <div className="flex justify-end p-2">
+              <p className="text-sm font-bold">Total Estimated: <span className="text-accent">${calculateTotal()}</span></p>
             </div>
           </div>
 
@@ -217,6 +217,7 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
             >
               <option>Pending</option>
               <option>Approved</option>
+              <option>Rejected</option>
               <option>Ordered</option>
               <option>Quotes Received</option>
               <option>Partial Receipt</option>
@@ -281,10 +282,30 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
           </div>
         </div>
 
-        <div className="flex gap-3 justify-end pt-6 border-t border-border/50">
+        <div className="flex flex-wrap gap-3 justify-end pt-6 border-t border-border/50">
           <button type="button" onClick={onClose} className="btn-secondary h-11 px-8 rounded-xl font-bold uppercase text-xs">
             {isView ? 'Close Review' : 'Cancel'}
           </button>
+          
+          {isView && isAdmin && formData.status === 'Pending' && (
+            <>
+              <button 
+                type="button" 
+                onClick={() => handleStatusChange('Rejected')} 
+                className="bg-red-500/10 hover:bg-red-500/20 text-red-500 h-11 px-6 rounded-xl font-bold uppercase text-xs flex items-center gap-2 border border-red-500/30"
+              >
+                <XCircle size={16} /> Reject Request
+              </button>
+              <button 
+                type="button" 
+                onClick={() => handleStatusChange('Approved')} 
+                className="bg-green-500/10 hover:bg-green-500/20 text-green-500 h-11 px-6 rounded-xl font-bold uppercase text-xs flex items-center gap-2 border border-green-500/30"
+              >
+                <CheckCircle size={16} /> Approve Request
+              </button>
+            </>
+          )}
+
           {!isView && (
             <button type="submit" className="btn-primary h-11 px-8 rounded-xl font-bold uppercase text-xs">
               {modalType === 'add' ? 'Submit Request' : 'Update Strategic Request'}

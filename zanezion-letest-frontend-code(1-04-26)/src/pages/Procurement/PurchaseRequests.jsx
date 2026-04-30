@@ -4,9 +4,10 @@ import { Search, Plus } from 'lucide-react';
 import { useData } from '../../context/GlobalDataContext';
 import RequestModal from '../../components/RequestModal';
 import Pagination from '../../components/Common/Pagination';
+import { normalizeRole } from '../../utils/authUtils';
 
 const PurchaseRequests = () => {
-  const { purchaseRequests, addPurchaseRequest, updatePurchaseRequest, deletePurchaseRequest, fetchProcurement, hasMenuPermission } = useData();
+  const { purchaseRequests, addPurchaseRequest, updatePurchaseRequest, deletePurchaseRequest, fetchProcurement, hasMenuPermission, currentUser } = useData();
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -38,7 +39,7 @@ const PurchaseRequests = () => {
   const handleSave = (formData) => {
     if (modalType === 'add') {
       addPurchaseRequest(formData);
-    } else if (modalType === 'edit') {
+    } else {
       updatePurchaseRequest({ ...selectedRequest, ...formData });
     }
     setIsModalOpen(false);
@@ -55,9 +56,10 @@ const PurchaseRequests = () => {
       header: "Items",
       accessor: "items",
       render: (item) => {
-        if (!item.items || item.items.length === 0) return item.item || "No Items";
-        if (item.items.length === 1) return item.items[0].name;
-        return `${item.items[0].name} (+${item.items.length - 1} more)`;
+        const items = Array.isArray(item.items) ? item.items : [];
+        if (items.length === 0) return item.item || "No Items";
+        if (items.length === 1) return items[0].name;
+        return `${items[0].name} (+${items.length - 1} more)`;
       }
     },
     { header: "Requester", accessor: "requester" },
@@ -65,8 +67,9 @@ const PurchaseRequests = () => {
       header: "Total Est.",
       accessor: "total",
       render: (item) => {
-        const total = item.total || (item.items ? item.items.reduce((acc, i) => acc + (i.price * i.qty), 0) : 0);
-        return `$${parseFloat(total).toLocaleString()}`;
+        const items = Array.isArray(item.items) ? item.items : [];
+        const total = item.total || items.reduce((acc, i) => acc + ((parseFloat(i.price) || 0) * (parseFloat(i.qty) || 0)), 0);
+        return `$${parseFloat(total || 0).toLocaleString()}`;
       }
     },
     { header: "Department", accessor: "department" },
@@ -81,7 +84,7 @@ const PurchaseRequests = () => {
           <h1 className="text-3xl font-bold tracking-tight">Purchase Requests</h1>
           <p className="text-secondary mt-1">Review and approve procurement requests from departments.</p>
         </div>
-        {hasMenuPermission('Purchase Requests', 'can_add') && (
+        {(hasMenuPermission('Purchase Requests', 'can_add') || normalizeRole(currentUser?.role) === 'customer' || normalizeRole(currentUser?.role) === 'procurement') && (
           <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
             <Plus size={16} /> New Request
           </button>

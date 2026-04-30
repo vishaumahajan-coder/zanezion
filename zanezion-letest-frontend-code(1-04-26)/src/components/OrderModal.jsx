@@ -5,14 +5,43 @@ import CustomDatePicker from './CustomDatePicker';
 import { useData } from '../context/GlobalDataContext';
 
 const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelete, initialData, role }) => {
-    const { currentUser, vendors, clients, fetchVendors, fetchClients } = useData();
+    const { currentUser, vendors, clients, fetchVendors, fetchClients, customerUsers, fetchCustomerUsers } = useData();
 
     useEffect(() => {
         if (isOpen) {
             fetchVendors();
             fetchClients();
+            fetchCustomerUsers();
         }
-    }, [isOpen, fetchVendors, fetchClients]);
+    }, [isOpen, fetchVendors, fetchClients, fetchCustomerUsers]);
+
+    // Merge all client sources into one unified list for dropdown
+    const allClientsForDropdown = React.useMemo(() => {
+        const companyClients = (clients || []).map(c => ({
+            id: `company_${c.id}`,
+            rawId: c.id,
+            name: c.business_name || c.name,
+            email: c.email,
+            type: c.client_type === 'Business' || c.tenant_type === 'business' ? 'Business Client' :
+                  c.client_type === 'SaaS' || c.tenant_type === 'saas' ? 'SaaS Client' : 'Personal Client',
+            source: 'company'
+        }));
+
+        const customerList = (customerUsers || []).map(u => ({
+            id: `user_${u.id}`,
+            rawId: u.id,
+            name: u.name,
+            email: u.email,
+            type: 'Personal Account',
+            source: 'user'
+        }));
+
+        // Remove duplicates by email
+        const emails = new Set(companyClients.map(c => c.email?.toLowerCase()));
+        const uniqueCustomers = customerList.filter(u => !emails.has(u.email?.toLowerCase()));
+
+        return [...companyClients, ...uniqueCustomers];
+    }, [clients, customerUsers]);
     const [formData, setFormData] = useState({
         client: '',
         clientId: '',
@@ -63,9 +92,15 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
             });
         } else if (selectedOrder) {
             const parsedItems = typeof selectedOrder.items === 'string' ? JSON.parse(selectedOrder.items) : selectedOrder.items;
+            // Try to match existing order's client in dropdown list
+            const existingClientId = selectedOrder.clientId || selectedOrder.client_id || '';
+            const matchedDropdown = allClientsForDropdown.find(c =>
+                String(c.rawId) === String(existingClientId)
+            );
             setFormData({
-                client: selectedOrder.client || '',
-                clientId: selectedOrder.clientId || selectedOrder.client_id || '',
+                client: selectedOrder.client || selectedOrder.customer_name || selectedOrder.created_by_name || '',
+                clientId: existingClientId,
+                clientDropdownId: matchedDropdown?.id || '',
                 items: (Array.isArray(parsedItems) && parsedItems.length > 0) ? parsedItems : [{ name: selectedOrder.product || '', qty: parseInt(selectedOrder.qty) || 1, price: selectedOrder.price ?? '' }],
                 location: selectedOrder.location || '',
                 status: selectedOrder.status || 'Pending',
@@ -166,27 +201,52 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                             )}
                             {role !== 'client' && role !== 'customer' && (
                                 <div className={`space-y-1 ${modalType === 'add' ? 'col-span-1 md:col-span-2' : ''}`}>
-                                    <label className="text-[10px] font-bold text-muted uppercase">Client</label>
+                                    <label className="text-[10px] font-bold text-muted uppercase">
+                                        Client / Customer
+                                        {formData.client && modalType !== 'add' && (
+                                            <span className="ml-2 text-accent normal-case font-normal">
+                                                — {formData.client}
+                                            </span>
+                                        )}
+                                    </label>
                                     <select
-                                        value={formData.clientId}
+                                        value={formData.clientDropdownId || ''}
                                         onChange={(e) => {
-                                            const selectedClient = (clients || []).find(c => c.id.toString() === e.target.value);
-                                            setFormData({ 
-                                                ...formData, 
-                                                clientId: e.target.value,
-                                                client: selectedClient ? (selectedClient.business_name || selectedClient.name) : ''
+                                            const val = e.target.value;
+                                            const selected = allClientsForDropdown.find(c => c.id === val);
+                                            setFormData({
+                                                ...formData,
+                                                clientDropdownId: val,
+                                                clientId: selected ? selected.rawId : '',
+                                                client: selected ? selected.name : ''
                                             });
                                         }}
                                         className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
                                         disabled={modalType === 'view'}
-                                        required
                                     >
-                                        <option value="" disabled>Select Client...</option>
-                                        {(clients || []).map(c => (
-                                            <option key={c.id} value={c.id}>
-                                                {c.business_name || c.name} ({c.clientType === 'SaaS' ? 'SaaS Client' : 'Personal Client'})
-                                            </option>
-                                        ))}
+                                        <option value="">
+                                            {formData.client
+                                                ? `Current: ${formData.client}`
+                                                : 'Select Client / Customer...'}
+                                        </option>
+                                        {allClientsForDropdown.length > 0 && (
+                                            <>
+                                                <optgroup label="── Company Clients ──">
+                                                    {allClientsForDropdown.filter(c => c.source === 'company').map(c => (
+                                                        <option key={c.id} value={c.id}>
+                                                            {c.name} ({c.type})
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
+                                                <optgroup label="── Personal Customers ──">
+                                                    {allClientsForDropdown.filter(c => c.source === 'user').map(c => (
+                                                        <option key={c.id} value={c.id}>
+                                                            {c.name} (Personal Account)
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
+                                            </>
+                                        )}
                                     </select>
                                 </div>
                             )}

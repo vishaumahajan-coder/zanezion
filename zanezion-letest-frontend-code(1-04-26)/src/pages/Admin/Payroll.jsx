@@ -5,9 +5,10 @@ import { DollarSign, Plus, Download, Filter, User, Calendar, CreditCard, History
 import StatusBadge from '../../components/StatusBadge';
 import { useData } from '../../context/GlobalDataContext';
 import api from '../../utils/api';
+import { normalizeRole } from '../../utils/authUtils';
 
 const Payroll = () => {
-    const { users, addLog, hasMenuPermission } = useData();
+    const { users, fetchStaff, addLog, hasMenuPermission, currentUser } = useData();
     const [payHistory, setPayHistory] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [modalType, setModalType] = useState('add');
@@ -42,7 +43,8 @@ const Payroll = () => {
 
     React.useEffect(() => {
         fetchPayroll();
-    }, []);
+        fetchStaff();
+    }, [fetchStaff]);
 
     const allItems = payHistory.map(p => ({
         ...p,
@@ -78,8 +80,20 @@ const Payroll = () => {
         }
         setModalType(type);
         if (row) {
-            let baseEquivalent = parseFloat((row.total || '').replace(/[^0-9.]/g, '')) || 0;
-            setFormData({ ...row, baseSalary: row.baseSalary || baseEquivalent, rawAmount: baseEquivalent });
+            // Map backend snake_case to frontend camelCase for the form
+            setFormData({ 
+                ...row, 
+                baseSalary: row.base_salary || row.baseSalary || 0,
+                bonus: row.bonus || 0,
+                nibDeduction: row.nib_deduction || row.nibDeduction || 0,
+                medicalDeduction: row.medical_deduction || row.medicalDeduction || 0,
+                pensionDeduction: row.pension_deduction || row.pensionDeduction || 0,
+                savingsDeduction: row.savings_deduction || row.savingsDeduction || 0,
+                birthdayClub: row.birthday_club || row.birthdayClub || 0,
+                method: row.method || 'Direct Deposit',
+                date: row.date || (row.payment_date ? new Date(row.payment_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+                status: row.status || 'Pending'
+            });
         }
         else setFormData({ name: '', empId: '', amount: '', baseSalary: 0, bonus: 0, nibDeduction: 0, medicalDeduction: 0, pensionDeduction: 0, savingsDeduction: 0, birthdayClub: 0, method: 'Direct Deposit', date: new Date().toISOString().split('T')[0], status: 'Pending' });
         setIsModalOpen(true);
@@ -174,7 +188,11 @@ const Payroll = () => {
                     >
                         <History size={16} /> {showHistory ? 'View Pending' : 'View History'}
                     </button>
-                    {hasMenuPermission('Payroll', 'can_add') && (
+                    {(hasMenuPermission('Payroll', 'can_add') || 
+                      hasMenuPermission('Pay & Records', 'can_add') || 
+                      normalizeRole(currentUser?.role) === 'procurement' ||
+                      (localStorage.getItem('userRole') || '').toLowerCase().includes('procurement') ||
+                      (localStorage.getItem('userRole') || '').toLowerCase().includes('admin')) && (
                         <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add')}>
                             <Plus size={16} /> New Payout
                         </button>
@@ -255,7 +273,12 @@ const Payroll = () => {
                                     required
                                 >
                                     <option value="">Choose Staff...</option>
-                                    {users.map(u => (
+                                    {users.filter(u => {
+                                        // Non-superadmins cannot manage super_admin payroll
+                                        const currentRole = normalizeRole(currentUser?.role);
+                                        if (currentRole !== 'superadmin' && u.role === 'super_admin') return false;
+                                        return true;
+                                    }).map(u => (
                                         <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
                                     ))}
                                 </select>

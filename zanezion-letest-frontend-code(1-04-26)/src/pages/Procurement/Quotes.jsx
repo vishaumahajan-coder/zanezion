@@ -10,15 +10,49 @@ import { useData } from '../../context/GlobalDataContext';
 import CustomDatePicker from '../../components/CustomDatePicker';
 import StatusBadge from '../../components/StatusBadge';
 import Pagination from '../../components/Common/Pagination';
+import { useLocation, useNavigate } from 'react-router-dom';
+
+/** API may return items as JSON string, object, or array — form always uses [{ name, qty, price }]. */
+function normalizeQuoteItems(items) {
+  const defaultRow = () => ({ name: '', qty: 1, price: 0 });
+  if (items == null || items === '') return [defaultRow()];
+  if (typeof items === 'string') {
+    try {
+      const parsed = JSON.parse(items);
+      return normalizeQuoteItems(parsed);
+    } catch {
+      return [defaultRow()];
+    }
+  }
+  if (Array.isArray(items)) {
+    if (items.length === 0) return [defaultRow()];
+    return items.map((row) => ({
+      name: row?.name ?? row?.product_name ?? row?.title ?? '',
+      qty: row?.qty ?? row?.quantity ?? 1,
+      price: row?.price ?? row?.unit_price ?? 0,
+    }));
+  }
+  if (typeof items === 'object') {
+    return [{
+      name: items.name ?? items.product_name ?? items.title ?? '',
+      qty: items.qty ?? items.quantity ?? 1,
+      price: items.price ?? items.unit_price ?? 0,
+    }];
+  }
+  return [defaultRow()];
+}
 
 const Quotes = () => {
   const { quotes, addQuote, updateQuote, deleteQuote, addOrder, fetchQuotes, hasMenuPermission } = useData();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
 
   React.useEffect(() => {
     fetchQuotes({ search: searchTerm });
   }, [fetchQuotes, searchTerm]);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('view');
   const [selectedQuote, setSelectedQuote] = useState(null);
@@ -31,6 +65,24 @@ const Quotes = () => {
     status: 'Pending'
   });
 
+  // Procurement dashboard "New quote" → /dashboard/quotes?new=1
+  React.useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('new') !== '1') return;
+    setSelectedQuote({});
+    setModalType('add');
+    setFormData({
+      vendor: '',
+      vendorId: 1,
+      items: [{ name: '', qty: 1, price: 0 }],
+      leadTime: '3 Days',
+      validity: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      status: 'Pending',
+    });
+    setIsModalOpen(true);
+    navigate(location.pathname, { replace: true });
+  }, [location.search, location.pathname, navigate]);
+
   const filteredQuotes = quotes;
   const itemsPerPage = 10;
   const currentQuotes = filteredQuotes.slice((page - 1) * itemsPerPage, page * itemsPerPage);
@@ -41,7 +93,9 @@ const Quotes = () => {
     setModalType(type);
     setFormData(quote.id ? {
       ...quote,
-      items: quote.items || [{ name: '', qty: 1, price: 0 }]
+      items: normalizeQuoteItems(quote.items),
+      validity: quote.validity ?? (quote.validity_date?.split?.('T')?.[0] || ''),
+      leadTime: quote.leadTime ?? quote.lead_time ?? '',
     } : {
       vendor: '',
       vendorId: 1,
@@ -54,16 +108,19 @@ const Quotes = () => {
   };
 
   const handleAddItem = () => {
-    setFormData({ ...formData, items: [...formData.items, { name: '', qty: 1, price: 0 }] });
+    const items = normalizeQuoteItems(formData.items);
+    setFormData({ ...formData, items: [...items, { name: '', qty: 1, price: 0 }] });
   };
 
   const removeItem = (index) => {
-    setFormData({ ...formData, items: formData.items.filter((_, i) => i !== index) });
+    const items = normalizeQuoteItems(formData.items);
+    setFormData({ ...formData, items: items.filter((_, i) => i !== index) });
   };
 
   const handleSave = () => {
-    const total = formData.items.reduce((acc, i) => acc + (parseFloat(i.price) * parseInt(i.qty)), 0);
-    const finalData = { ...formData, total, date: new Date().toISOString().split('T')[0] };
+    const items = normalizeQuoteItems(formData.items);
+    const total = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (parseInt(i.qty, 10) || 0), 0);
+    const finalData = { ...formData, items, total, date: new Date().toISOString().split('T')[0] };
     if (modalType === 'add') {
       addQuote(finalData);
     } else if (modalType === 'edit') {
@@ -78,7 +135,7 @@ const Quotes = () => {
     addOrder({
       clientId: 1, // Default or selected
       client: 'Platinum Client X',
-      items: selectedQuote.items,
+      items: normalizeQuoteItems(selectedQuote.items),
       vendorId: selectedQuote.vendorId,
       vendor: 'Monaco Global', // Derived from ID usually
       status: 'Confirmed',
@@ -267,7 +324,7 @@ const Quotes = () => {
                   )}
                 </div>
                 <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
-                  {formData.items.map((item, idx) => (
+                  {normalizeQuoteItems(formData.items).map((item, idx) => (
                     <div key={idx} className="flex gap-2 items-end bg-white/5 p-2 rounded-lg border border-border">
                       <div className="flex-1 space-y-1">
                         <label className="text-[8px] text-muted uppercase">Asset Name</label>
@@ -275,8 +332,8 @@ const Quotes = () => {
                           type="text"
                           value={item.name}
                           onChange={(e) => {
-                            const newItems = [...formData.items];
-                            newItems[idx].name = e.target.value;
+                            const newItems = [...normalizeQuoteItems(formData.items)];
+                            newItems[idx] = { ...newItems[idx], name: e.target.value };
                             setFormData({ ...formData, items: newItems });
                           }}
                           className="w-full bg-transparent border-0 border-b border-border focus:border-accent text-xs p-0 outline-none"
@@ -290,8 +347,8 @@ const Quotes = () => {
                           type="number"
                           value={item.qty}
                           onChange={(e) => {
-                            const newItems = [...formData.items];
-                            newItems[idx].qty = e.target.value;
+                            const newItems = [...normalizeQuoteItems(formData.items)];
+                            newItems[idx] = { ...newItems[idx], qty: e.target.value };
                             setFormData({ ...formData, items: newItems });
                           }}
                           className="w-full bg-transparent border-0 border-b border-border focus:border-accent text-xs p-0 outline-none"
@@ -304,8 +361,8 @@ const Quotes = () => {
                           type="number"
                           value={item.price}
                           onChange={(e) => {
-                            const newItems = [...formData.items];
-                            newItems[idx].price = e.target.value;
+                            const newItems = [...normalizeQuoteItems(formData.items)];
+                            newItems[idx] = { ...newItems[idx], price: e.target.value };
                             setFormData({ ...formData, items: newItems });
                           }}
                           className="w-full bg-transparent border-0 border-b border-border focus:border-accent text-xs p-0 outline-none"
@@ -313,7 +370,7 @@ const Quotes = () => {
                           step="0.01"
                         />
                       </div>
-                      {modalType !== 'view' && formData.items.length > 1 && (
+                      {modalType !== 'view' && normalizeQuoteItems(formData.items).length > 1 && (
                         <button onClick={() => removeItem(idx)} className="p-1.5 text-danger hover:bg-danger/10 rounded-lg">
                           <Trash2 size={14} />
                         </button>
@@ -330,7 +387,7 @@ const Quotes = () => {
                       <DollarSign size={16} className="text-accent" /> Total Manifest Value
                     </div>
                     <span className="text-xl font-bold font-mono text-accent">
-                      ${formData.items.reduce((acc, i) => acc + (parseFloat(i.price) * parseInt(i.qty)), 0).toLocaleString()}
+                      ${normalizeQuoteItems(formData.items).reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (parseInt(i.qty, 10) || 0), 0).toLocaleString()}
                     </span>
                   </div>
                 </div>
@@ -375,7 +432,7 @@ const Quotes = () => {
               <div className="text-right">
                 <h2 className="text-lg font-black text-black tracking-tighter italic border-b border-black inline-block mb-1 uppercase">Official Quote</h2>
                 <p className="text-[9px] font-black text-gray-400 mt-0.5">PROTOCOL ID: {selectedQuote.id}</p>
-                <p className="text-[7px] font-black uppercase tracking-widest leading-none">ISSUED. {selectedQuote.date}</p>
+                <p className="text-[7px] font-black uppercase tracking-widest leading-none">ISSUED. {(selectedQuote.created_at || selectedQuote.date)?.split('T')[0] || 'N/A'}</p>
               </div>
             </div>
 
@@ -383,7 +440,7 @@ const Quotes = () => {
             <div className="grid grid-cols-2 gap-8 mb-6 px-1 print-section">
               <div className="border-l-2 border-black pl-4">
                 <p className="text-[6px] font-black uppercase tracking-widest opacity-40 mb-0.5 underline italic">Supply Partner:</p>
-                <p className="text-base font-black italic tracking-tight uppercase leading-tight">{selectedQuote.vendor}</p>
+                <p className="text-base font-black italic tracking-tight uppercase leading-tight">{selectedQuote.vendor_name || selectedQuote.vendor}</p>
                 <p className="text-[8px] text-gray-500 mt-0.5 font-medium leading-tight italic">Strategic Sourcing Partner</p>
                 <p className="text-[7px] font-black mt-1 text-gray-400">REGISTRY: {selectedQuote.vendorId || 'ZN-VND-EXT'}</p>
               </div>
@@ -409,7 +466,7 @@ const Quotes = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {selectedQuote.items?.map((item, idx) => (
+                  {normalizeQuoteItems(selectedQuote.items).map((item, idx) => (
                     <tr key={idx} className="border-b border-gray-100">
                       <td className="py-3 px-2">
                         <div className="flex flex-col gap-0.5">
@@ -434,16 +491,16 @@ const Quotes = () => {
               <div className="w-64">
                 <div className="flex justify-between items-center py-1.5 border-t border-black mb-1.5">
                   <p className="text-[8px] font-black uppercase tracking-tighter opacity-100 italic">Subtotal</p>
-                  <span className="text-sm font-bold italic">${parseFloat(selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="text-sm font-bold italic">${Number(selectedQuote.total_amount || selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between items-center p-3 bg-black text-white rounded-none">
                   <div className="flex flex-col">
                     <p className="text-[6px] font-black uppercase tracking-widest opacity-60">Total Offer Value</p>
                     <p className="text-[7px] font-bold leading-none mt-0.5">Fixed Registry Price</p>
                   </div>
-                  <h3 className="text-xl font-black italic tracking-tighter">${parseFloat(selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD</h3>
+                  <h3 className="text-xl font-black italic tracking-tighter">${Number(selectedQuote.total_amount || selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD</h3>
                 </div>
-                <p className="text-[6px] text-gray-400 font-bold italic mt-1.5 text-right uppercase tracking-widest">Valid Until: {selectedQuote.validity}</p>
+                <p className="text-[6px] text-gray-400 font-bold italic mt-1.5 text-right uppercase tracking-widest">Valid Until: {(selectedQuote.validity_date || selectedQuote.validity)?.split('T')[0]}</p>
               </div>
             </div>
 

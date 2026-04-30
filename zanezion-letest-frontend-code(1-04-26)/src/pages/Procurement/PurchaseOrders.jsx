@@ -123,7 +123,8 @@ const PurchaseOrders = () => {
 
     const HandleReceiveGoods = (e) => {
         e.preventDefault();
-        const receivedData = selectedPO.items.map(item => ({
+        const poItems = Array.isArray(selectedPO.items) ? selectedPO.items : [];
+        const receivedData = poItems.map(item => ({
             id: item.id,
             name: item.name,
             price: item.price,
@@ -470,7 +471,7 @@ const PurchaseOrders = () => {
 
                             <form onSubmit={HandleReceiveGoods} className="p-8">
                                 <div className="space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-2 mb-8">
-                                    {selectedPO.items.map((item) => {
+                                    {(Array.isArray(selectedPO.items) ? selectedPO.items : []).map((item) => {
                                         const progress = (item.receivedQty / item.orderedQty) * 100;
                                         return (
                                             <div key={item.id} className="p-4 md:p-6 bg-white/[0.03] border border-white/10 rounded-2xl md:rounded-3xl group hover:border-accent/40 transition-all">
@@ -582,19 +583,19 @@ const PurchaseOrders = () => {
                                 <div className="grid grid-cols-2 md:grid-cols-5 gap-6 p-6 bg-white/[0.02] border border-white/5 rounded-2xl">
                                     <div>
                                         <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1">Vendor</p>
-                                        <p className="text-sm font-black text-white">{selectedPO.vendorName}</p>
+                                        <p className="text-sm font-black text-white">{selectedPO.vendor_name || selectedPO.vendorName || 'Unknown Vendor'}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1">Issue Date</p>
-                                        <p className="text-sm font-black text-white">{selectedPO.date}</p>
+                                        <p className="text-sm font-black text-white">{(selectedPO.created_at || selectedPO.date)?.split('T')[0] || 'N/A'}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1">Payment Terms</p>
-                                        <p className="text-sm font-black text-accent">{selectedPO.paymentTerms || 'Net 30'}</p>
+                                        <p className="text-sm font-black text-accent">{selectedPO.payment_terms || selectedPO.paymentTerms || 'Net 30'}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1">Total Value</p>
-                                        <p className="text-sm font-black text-white">${Number(selectedPO.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                        <p className="text-sm font-black text-white">${Number(selectedPO.total_amount || selectedPO.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                                     </div>
                                     <div>
                                         <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1">Status</p>
@@ -671,7 +672,7 @@ const PurchaseOrders = () => {
                             <div className="text-right">
                                 <h2 className="text-lg font-black text-black tracking-tighter italic border-b border-black inline-block mb-1 uppercase">Purchase Order</h2>
                                 <p className="text-[9px] font-black text-gray-400 mt-0.5">PROTOCOL ID: {selectedPO.id}</p>
-                                <p className="text-[7px] font-black uppercase tracking-widest leading-none">ISSUED. {selectedPO.date}</p>
+                                <p className="text-[7px] font-black uppercase tracking-widest leading-none">ISSUED. {(selectedPO.created_at || selectedPO.date)?.split('T')[0] || 'N/A'}</p>
                             </div>
                         </div>
 
@@ -679,7 +680,7 @@ const PurchaseOrders = () => {
                         <div className="grid grid-cols-2 gap-8 mb-6 px-1 print-section">
                             <div className="border-l-2 border-black pl-4">
                                 <p className="text-[6px] font-black uppercase tracking-widest opacity-40 mb-0.5 underline italic">Sourcing Vendor:</p>
-                                <p className="text-base font-black italic tracking-tight uppercase leading-tight">{selectedPO.vendorName}</p>
+                                <p className="text-base font-black italic tracking-tight uppercase leading-tight">{selectedPO.vendor_name || selectedPO.vendorName || 'Unknown Vendor'}</p>
                                 <p className="text-[8px] text-gray-500 mt-0.5 font-medium leading-tight italic">Approved Institutional Supplier</p>
                                 <p className="text-[7px] font-black mt-1 text-gray-400 uppercase tracking-widest">Registry ID: {selectedPO.vendorId || 'ZN-VND-EXT'}</p>
                             </div>
@@ -689,7 +690,7 @@ const PurchaseOrders = () => {
                                 </div>
                                 <div className="mt-2">
                                     <p className="text-[6px] font-black uppercase tracking-widest opacity-40 mb-0.5 leading-none">Payment Protocol:</p>
-                                    <p className="text-sm font-black italic uppercase leading-none">{selectedPO.paymentTerms || 'Net 30 Protocol'}</p>
+                                    <p className="text-sm font-black italic uppercase leading-none">{selectedPO.payment_terms || selectedPO.paymentTerms || 'Net 30 Protocol'}</p>
                                 </div>
                             </div>
                         </div>
@@ -705,7 +706,7 @@ const PurchaseOrders = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {selectedPO.items.map((item, idx) => (
+                                    {(Array.isArray(selectedPO.items) ? selectedPO.items : []).map((item, idx) => (
                                         <tr key={idx} className="border-b border-gray-100">
                                             <td className="py-3 px-2">
                                                 <div className="flex flex-col gap-0.5">
@@ -713,9 +714,9 @@ const PurchaseOrders = () => {
                                                     <p className="text-[7px] text-gray-400 font-bold uppercase tracking-widest italic leading-none">{item.category || 'General Procurement'}</p>
                                                 </div>
                                             </td>
-                                            <td className="text-center py-3 px-2 font-black italic text-xs opacity-40 leading-none">{item.orderedQty.toString().padStart(2, '0')}</td>
+                                            <td className="text-center py-3 px-2 font-black italic text-xs opacity-40 leading-none">{String(item.orderedQty ?? 0).padStart(2, '0')}</td>
                                             <td className="text-right py-3 px-2">
-                                                <span className="text-sm font-black tracking-tighter">${(item.orderedQty * item.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                <span className="text-sm font-black tracking-tighter">${((item.orderedQty ?? 0) * (item.price ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                             </td>
                                         </tr>
                                     ))}
@@ -728,14 +729,14 @@ const PurchaseOrders = () => {
                             <div className="w-64">
                                 <div className="flex justify-between items-center py-1.5 border-t border-black mb-1.5">
                                     <p className="text-[8px] font-black uppercase tracking-tighter opacity-100 italic">Institutional PO Subtotal</p>
-                                    <span className="text-sm font-bold italic">${parseFloat(selectedPO.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    <span className="text-sm font-bold italic">${Number(selectedPO.total_amount || selectedPO.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                 </div>
                                 <div className="flex justify-between items-center p-3 bg-black text-white rounded-none">
                                     <div className="flex flex-col">
                                         <p className="text-[6px] font-black uppercase tracking-widest opacity-60">Total Commitment Value</p>
                                         <p className="text-[7px] font-bold leading-none mt-0.5 uppercase italic">Fiscal Reserve Auth</p>
                                     </div>
-                                    <h3 className="text-xl font-black italic tracking-tighter">${parseFloat(selectedPO.total).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD</h3>
+                                    <h3 className="text-xl font-black italic tracking-tighter">${Number(selectedPO.total_amount || selectedPO.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD</h3>
                                 </div>
                             </div>
                         </div>

@@ -17,7 +17,7 @@ const Users = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [modalType, setModalType] = useState('add');
-  const [formData, setFormData] = useState({ name: '', email: '', phone: '', role: isSuperAdmin ? 'admin' : 'Operations', status: 'Active', bankingInfo: { bank: '', account: '', routing: '', method: 'Direct Deposit' } });
+  const [formData, setFormData] = useState({ name: '', email: '', phone: '', role: isSuperAdmin ? 'admin' : 'operations', status: 'Active', bankingInfo: { bank: '', account: '', routing: '', method: 'Direct Deposit' } });
   const [isDelegateModalOpen, setIsDelegateModalOpen] = useState(false);
   const [delegateFormData, setDelegateFormData] = useState({
     assigneeId: '', assignee: '', task: '', location: '', priority: 'Medium', missionType: 'General',
@@ -88,7 +88,36 @@ const Users = () => {
   const handleAction = (type, user) => {
     setSelectedUser(user);
     setModalType(type);
-    setFormData(user.id ? { ...user, bankingInfo: user.bankingInfo || { bank: '', account: '', routing: '', method: 'Direct Deposit' } } : { name: '', email: '', phone: '', role: 'Operations', status: 'Active', bankingInfo: { bank: '', account: '', routing: '', method: 'Direct Deposit' } });
+
+    if (user.id) {
+      // Map backend snake_case fields → frontend form fields
+      setFormData({
+        ...user,
+        // birthday comes as "2026-04-29T00:00:00.000Z" from DB, trim to date only
+        birthday: user.birthday ? String(user.birthday).split('T')[0] : '',
+        nibNumber: user.nib_number || user.nibNumber || '',
+        vacationBalance: user.vacation_balance ?? user.vacationBalance ?? 0,
+        employmentStatus: user.employment_status || user.employmentStatus || 'Full Time',
+        // Flatten bank fields into bankingInfo object for the form
+        bankingInfo: {
+          bank:    user.bank_name      || user.bankingInfo?.bank    || '',
+          account: user.account_number || user.bankingInfo?.account || '',
+          routing: user.routing_number || user.bankingInfo?.routing || '',
+          method:  user.bankingInfo?.method || 'Direct Deposit',
+        },
+      });
+    } else {
+      // New user — empty form
+      setFormData({
+        name: '', email: '', phone: '', password: '',
+        role: isSuperAdmin ? 'admin' : 'operations',
+        status: 'Active',
+        birthday: '', nibNumber: '', vacationBalance: 0,
+        employmentStatus: 'Full Time',
+        bankingInfo: { bank: '', account: '', routing: '', method: 'Direct Deposit' },
+      });
+    }
+
     setIsModalOpen(true);
   };
 
@@ -166,12 +195,15 @@ const Users = () => {
     { header: "Status", accessor: "status" },
     {
       header: "Vacation Bal.",
-      accessor: "vacationBalance",
-      render: (row) => (
-        <span className={`font-bold ${row.vacationBalance > 20 ? 'text-success' : 'text-danger'}`}>
-          {row.vacationBalance || 0} hrs
-        </span>
-      )
+      accessor: "vacation_balance",
+      render: (row) => {
+        const bal = row.vacation_balance ?? row.vacationBalance ?? 0;
+        return (
+          <span className={`font-bold ${bal > 20 ? 'text-success' : bal > 0 ? 'text-warning' : 'text-danger'}`}>
+            {bal} days
+          </span>
+        );
+      }
     },
   ];
 
@@ -265,7 +297,9 @@ const Users = () => {
                       <td className="p-4 text-secondary text-xs">{client.phone || '—'}</td>
                       <td className="p-4">
                         <span className="px-2 py-1 bg-white/10 text-white rounded text-[9px] font-black uppercase">
-                          {client.client_type || 'Personal'}
+                          {client.client_type === 'Business' ? 'Business Client' :
+                           client.client_type === 'SaaS' ? 'SaaS Client' :
+                           client.client_type || 'Personal Client'}
                         </span>
                       </td>
                       <td className="p-4 text-accent font-bold text-xs">{client.plan || '—'}</td>
@@ -840,14 +874,20 @@ const Users = () => {
                     value={formData.role}
                     onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                     className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
-                    disabled={modalType === 'view'}
+                    disabled={modalType === 'view' || isSuperAdmin}
                   >
-                    <option>Operations</option>
-                    <option>Procurement</option>
-                    <option>Logistics</option>
-                    <option>Inventory</option>
-                    <option>Concierge</option>
-                    <option>Field Staff</option>
+                    {isSuperAdmin ? (
+                      <option value="admin">Admin (Internal Manager)</option>
+                    ) : (
+                      <>
+                        <option value="operations">Operations</option>
+                        <option value="procurement">Procurement</option>
+                        <option value="logistics">Logistics</option>
+                        <option value="inventory">Inventory</option>
+                        <option value="concierge">Concierge</option>
+                        <option value="staff">Field Staff</option>
+                      </>
+                    )}
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -1018,16 +1058,27 @@ const Users = () => {
               </div>
 
               {modalType === 'view' && (
-                <div className="mt-6 p-4 bg-white/5 rounded-xl border border-border space-y-4">
-                  <div className="flex items-center gap-3 text-sm">
-                    <ShieldCheck size={16} className="text-accent" />
-                    <span className="text-secondary">Last Login:</span>
-                    <span className="font-bold">2 hours ago (Monaco, MC)</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-sm">
-                    <Shield size={16} className="text-accent" />
-                    <span className="text-secondary">Security Level:</span>
-                    <span className="font-bold">L3 - Administrative</span>
+                <div className="mt-6 p-4 bg-white/5 rounded-xl border border-border space-y-3">
+                  <p className="text-[10px] font-black text-accent uppercase tracking-widest mb-2">Stored Details</p>
+                  {[
+                    { label: 'Birthday',         val: formData.birthday || '—' },
+                    { label: 'NIB Number',        val: formData.nibNumber || '—' },
+                    { label: 'Vacation Balance',  val: `${formData.vacationBalance ?? 0} days` },
+                    { label: 'Bank',              val: formData.bankingInfo?.bank || '—' },
+                    { label: 'Account No.',       val: formData.bankingInfo?.account || '—' },
+                    { label: 'Routing No.',       val: formData.bankingInfo?.routing || '—' },
+                    { label: 'Pay Method',        val: formData.bankingInfo?.method || '—' },
+                  ].map(({ label, val }) => (
+                    <div key={label} className="flex items-center gap-3 text-sm">
+                      <ShieldCheck size={14} className="text-accent shrink-0" />
+                      <span className="text-secondary w-32">{label}:</span>
+                      <span className="font-bold text-white">{val}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-3 text-sm pt-1 border-t border-white/5">
+                    <Shield size={14} className="text-accent shrink-0" />
+                    <span className="text-secondary w-32">Role:</span>
+                    <span className="font-bold text-white capitalize">{formData.role}</span>
                   </div>
                 </div>
               )}

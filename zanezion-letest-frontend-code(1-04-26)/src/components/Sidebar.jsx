@@ -14,6 +14,7 @@ const menuItems = {
   superadmin: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
     { icon: Users, label: 'Clients', path: '/dashboard/clients' },
+    { icon: UserCog, label: 'HQ Personnel', path: '/dashboard/users' },
     { icon: Globe, label: 'Plans', path: '/dashboard/plans' },
     { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
   ],
@@ -36,8 +37,8 @@ const menuItems = {
     { icon: FileText, label: 'Purchase Orders', path: '/dashboard/purchase-orders' },
     { icon: FileText, label: 'Invoices', path: '/dashboard/invoices' },
     { icon: BarChart3, label: 'Audit Log', path: '/dashboard/audits' },
-    { icon: Calendar, label: 'Leave & Absence', path: '/dashboard?tab=leave' },
-    { icon: History, label: 'Pay & Records', path: '/dashboard?tab=pay' },
+    { icon: Calendar, label: 'Leave & Absence', path: '/dashboard/leave' },
+    { icon: History, label: 'Pay & Records', path: '/dashboard/payroll' },
   ],
   logistics: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
@@ -107,31 +108,43 @@ const menuItems = {
     { icon: FileText, label: 'Purchase Orders', path: '/dashboard/purchase-orders' },
     { icon: Truck, label: 'Fleet', path: '/dashboard/fleet' },
     { icon: Store, label: 'Warehouses', path: '/dashboard/warehouses' },
-    { icon: Smartphone, label: 'Staff Terminal', path: '/dashboard/staff-terminal' },
     { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
     { icon: ShieldCheck, label: 'Security Protocol', path: '/dashboard/roles-permissions' },
     { icon: Calendar, label: 'Leave & Absence', path: '/dashboard/leave' },
   ],
   saas_client: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
-    { icon: ShoppingCart, label: 'My Orders', path: '/dashboard/client-orders' },
-    { icon: History, label: 'Order History', path: '/dashboard/order-history' },
+    { icon: Users, label: 'Customers', path: '/dashboard/clients' },
+    { icon: ShoppingCart, label: 'Orders', path: '/dashboard/orders' },
+    { icon: Briefcase, label: 'Projects', path: '/dashboard/projects' },
+    { icon: Navigation, label: 'Missions', path: '/dashboard/missions' },
+    { icon: Truck, label: 'Deliveries', path: '/dashboard/deliveries' },
+    { icon: Package, label: 'Inventory', path: '/dashboard/inventory' },
+    { icon: UserCog, label: 'Staff Management', path: '/dashboard/users' },
     { icon: FileText, label: 'Invoices', path: '/dashboard/invoices' },
-    { icon: Car, label: 'Chauffeur Service', path: '/dashboard/chauffeur' },
-    { icon: Calendar, label: 'Events', path: '/dashboard/client-events' },
-    { icon: Truck, label: 'Track Delivery', path: '/dashboard/track-delivery' },
-    { icon: Headphones, label: 'Support', path: '/dashboard/support' },
+    { icon: CreditCard, label: 'Payroll', path: '/dashboard/payroll' },
+    { icon: BarChart3, label: 'Reports', path: '/dashboard/reports' },
+    { icon: Headphones, label: 'Support', path: '/dashboard/support-tickets' },
+    { icon: Car, label: 'Chauffeur', path: '/dashboard/chauffeur' },
+    { icon: Calendar, label: 'Events', path: '/dashboard/events' },
+    { icon: Heart, label: 'Guest Requests', path: '/dashboard/guest-requests' },
+    { icon: Gift, label: 'Luxury Items', path: '/dashboard/luxury-items' },
+    { icon: Store, label: 'Vendors', path: '/dashboard/vendors' },
+    { icon: ShoppingCart, label: 'Purchase Requests', path: '/dashboard/purchase-requests' },
+    { icon: Box, label: 'Quotes', path: '/dashboard/quotes' },
+    { icon: FileText, label: 'Purchase Orders', path: '/dashboard/purchase-orders' },
+    { icon: Truck, label: 'Fleet', path: '/dashboard/fleet' },
+    { icon: Store, label: 'Warehouses', path: '/dashboard/warehouses' },
     { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
+    { icon: ShieldCheck, label: 'Security Protocol', path: '/dashboard/roles-permissions' },
+    { icon: Calendar, label: 'Leave & Absence', path: '/dashboard/leave' },
   ],
   customer: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
     { icon: ShoppingBag, label: 'Marketplace', path: '/dashboard/store' },
     { icon: ShoppingCart, label: 'My Orders', path: '/dashboard/client-orders' },
-    { icon: FileText, label: 'Invoices', path: '/dashboard/invoices' },
     { icon: Truck, label: 'Track Delivery', path: '/dashboard/track-delivery' },
-    { icon: Car, label: 'Chauffeur Service', path: '/dashboard/chauffeur' },
-    { icon: Calendar, label: 'Events', path: '/dashboard/client-events' },
-    { icon: Heart, label: 'Concierge', path: '/dashboard/guest-requests' },
+    { icon: Headphones, label: 'Support', path: '/dashboard/support' },
   ],
   staff: [
     { icon: LayoutDashboard, label: 'Staff Terminal', path: '/dashboard' },
@@ -144,6 +157,20 @@ const menuItems = {
 
 import { useData } from '../context/GlobalDataContext';
 import { normalizeRole } from '../utils/authUtils';
+
+const ROLE_DISPLAY = {
+  superadmin: 'Super Admin',
+  admin: 'Manager',
+  operations: 'Operations',
+  procurement: 'Procurement',
+  logistics: 'Logistics',
+  inventory: 'Inventory',
+  concierge: 'Concierge',
+  client: 'Business Client',
+  saas_client: 'SaaS Admin',
+  customer: 'Personal User',
+  staff: 'Field Staff',
+};
 
 const Sidebar = ({ isOpen, toggleSidebar, role }) => {
   const { currentUser, menuPermissions } = useData();
@@ -177,20 +204,23 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
 
   // Plan-based access for customer role
   const userPlan = (currentUser?.plan || 'Free').toLowerCase();
+  // Personal (customer) users: no Events, no Concierge, no Invoices — pay at checkout only
   const planMenuAccess = {
-    free:       ['Dashboard', 'Marketplace', 'My Orders', 'Invoices', 'Track Delivery'],
-    basic:      ['Dashboard', 'Marketplace', 'My Orders', 'Invoices', 'Track Delivery', 'Chauffeur Service', 'Events'],
-    standard:   ['Dashboard', 'Marketplace', 'My Orders', 'Invoices', 'Track Delivery', 'Chauffeur Service', 'Events'],
-    executive:  ['Dashboard', 'Marketplace', 'My Orders', 'Invoices', 'Track Delivery', 'Chauffeur Service', 'Events', 'Concierge'],
-    platinum:   ['Dashboard', 'Marketplace', 'My Orders', 'Invoices', 'Track Delivery', 'Chauffeur Service', 'Events', 'Concierge'],
-    premium:    ['Dashboard', 'Marketplace', 'My Orders', 'Invoices', 'Track Delivery', 'Chauffeur Service', 'Events', 'Concierge'],
-    enterprise: ['Dashboard', 'Marketplace', 'My Orders', 'Invoices', 'Track Delivery', 'Chauffeur Service', 'Events', 'Concierge'],
+    free:       ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
+    basic:      ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
+    standard:   ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
+    executive:  ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
+    platinum:   ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
+    premium:    ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
+    enterprise: ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
   };
 
   const currentMenu = (() => {
-    // If DB-based permissions exist and user is NOT client or superadmin, filter
+    // Company admin & SaaS Admin: poora institutional menu milega (staff wala alag, permissions se)
+    if (userRole === 'admin' || userRole === 'saas_client') {
+      return menuItems.client || menuItems.superadmin;
+    }
     if (menuPermissions && menuPermissions.length > 0 && !isSuperAdmin) {
-      // Map DB permissions to menu item format using the icon map
       const iconMap = {
         'LayoutDashboard': LayoutDashboard, 'Users': Users, 'Shield': ShieldCheck, 'ShieldCheck': ShieldCheck,
         'CloudCog': Globe, 'Globe': Globe, 'Building': Users, 'Briefcase': Briefcase, 'Box': Box,
@@ -202,7 +232,7 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
         'BarChart2': BarChart3, 'BarChart3': BarChart3, 'DollarSign': CreditCard, 'CreditCard': CreditCard, 'Settings': Settings,
         'Headphones': Headphones, 'History': History, 'ClipboardList': ClipboardList, 'Activity': Activity, 'UserCog': UserCog
       };
-      return menuPermissions
+      let items = menuPermissions
         .filter(p => p.can_view && p.path)
         .map(p => ({
           icon: iconMap[p.icon] || LayoutDashboard,
@@ -212,10 +242,14 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
           can_edit: p.can_edit,
           can_delete: p.can_delete,
         }));
+      const hasDashboard = items.some(i => (i.path || '').split('?')[0] === '/dashboard');
+      if (userRole === 'client' && !hasDashboard) {
+        items = [{ icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' }, ...items];
+      }
+      return items;
     }
-    // Fallback: company admin uses same breadth as legacy `client` static menu (admin used to normalize to client)
-    if (userRole === 'admin') {
-      return menuItems.client || menuItems.superadmin;
+    if (userRole === 'client') {
+      return [{ icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' }];
     }
     // Customer role: filter by plan
     if (userRole === 'customer') {
@@ -224,13 +258,27 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
     }
     return menuItems[userRole] || menuItems.superadmin;
   })();
-  const clientBranding = (userRole === 'client' || userRole === 'admin')
+  // For SaaS tenant admins and business clients — show their company name as branding
+  const tenantCompanyName = currentUser?.company_name || currentUser?.companyName || null;
+  const tenantType = currentUser?.tenant_type || null;
+
+  const clientBranding = (userRole === 'client' || userRole === 'admin' || userRole === 'saas_client')
     ? (clients || []).find(c =>
         String(c.id).replace('CLT-', '') === String(currentUser?.clientId).replace('CLT-', '') ||
         String(c.id) === String(currentUser?.company_id) ||
         c.name === currentUser?.name
       )?.branding
     : null;
+
+  // Determine display name and tagline for sidebar header
+  const sidebarBrandName = clientBranding?.businessName
+    || tenantCompanyName
+    || 'ZANEZION';
+
+  const sidebarTagline = clientBranding?.tagline
+    || (tenantType === 'saas' ? 'SaaS Platform' : null)
+    || (tenantType === 'business' ? 'Business Portal' : null)
+    || 'Institutional';
 
   return (
     <>
@@ -257,16 +305,16 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
             <div className="w-10 h-10 md:w-11 md:h-11 bg-white border border-white/10 rounded-xl flex items-center justify-center shadow-2xl overflow-hidden shrink-0 transition-transform group-hover:scale-105 p-1.5">
               <img
                 src={clientBranding?.logo || "/logo.png"}
-                alt={clientBranding?.businessName || "ZaneZion"}
+                alt={sidebarBrandName}
                 className={`w-full h-full object-contain ${!clientBranding?.logo ? 'scale-[2.2]' : ''} transition-all duration-300`}
               />
             </div>
             <div className="flex flex-col min-w-0 pr-2 overflow-hidden">
               <span className="text-xs md:text-sm font-black tracking-tight text-white group-hover:text-accent transition-colors uppercase leading-tight truncate">
-                {clientBranding?.businessName || "ZANEZION"}
+                {sidebarBrandName}
               </span>
               <span className="text-[7px] md:text-[8px] font-bold tracking-[0.1em] text-accent/80 uppercase opacity-70 group-hover:opacity-100 italic truncate">
-                {clientBranding?.tagline || "Institutional"}
+                {sidebarTagline}
               </span>
             </div>
           </div>
@@ -324,9 +372,9 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
               <div className="overflow-hidden">
                 <p className="text-sm font-bold text-white truncate">{currentUser?.name || 'Guest'}</p>
                 <div className="flex items-center gap-2">
-                  <p className="text-[10px] text-muted truncate uppercase tracking-widest font-black">{userRole}</p>
-                  {userRole === 'customer' && (
-                    <span className="px-1.5 py-0.5 bg-accent/20 text-accent text-[8px] font-black uppercase rounded tracking-wider">{currentUser?.plan || 'Free'}</span>
+                  <p className="text-[10px] text-muted truncate uppercase tracking-widest font-black">{ROLE_DISPLAY[userRole] || userRole}</p>
+                  {userRole === 'customer' && currentUser?.plan && (
+                    <span className="px-1.5 py-0.5 bg-accent/20 text-accent text-[8px] font-black uppercase rounded tracking-wider">{currentUser.plan}</span>
                   )}
                 </div>
               </div>

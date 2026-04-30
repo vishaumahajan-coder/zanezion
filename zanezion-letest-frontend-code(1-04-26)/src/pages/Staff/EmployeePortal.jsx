@@ -27,16 +27,16 @@ const EmployeePortal = () => {
         clockIn, clockOut
     } = useData();
 
-    useEffect(() => {
-        console.log('[StaffPortal] Loading data...', { fetchSupportingDocs, fetchDeliveries, fetchPayHistory });
-        if (fetchSupportingDocs) fetchSupportingDocs();
-        if (fetchDeliveries) fetchDeliveries();
-        if (fetchPayHistory) fetchPayHistory();
-    }, []);
-
     const location = useLocation();
     const queryParams = new URLSearchParams(location.search);
     const activeTab = queryParams.get('tab') || 'dashboard';
+
+    useEffect(() => {
+        console.log('[StaffPortal] Synchronizing operational data for tab:', activeTab);
+        if (fetchSupportingDocs) fetchSupportingDocs();
+        if (fetchDeliveries) fetchDeliveries();
+        if (fetchPayHistory) fetchPayHistory();
+    }, [activeTab, fetchSupportingDocs, fetchDeliveries, fetchPayHistory]);
 
     const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
     const [leaveFormData, setLeaveFormData] = useState({ type: 'Vacation', start: '', end: '', reason: '' });
@@ -48,11 +48,17 @@ const EmployeePortal = () => {
     const [breachFormData, setBreachFormData] = useState({ type: 'Unauthorized Access', detail: '', location: currentUser?.location || '' });
 
 
-    // Filter assignments for the current user
-    const myAssignments = staffAssignments.filter(a => a.assigneeId === currentUser?.id?.toString() || a.assignee === currentUser?.name);
+    // Filter assignments for the current user - prioritize ID
+    const myAssignments = staffAssignments.filter(a => 
+        (a.assigneeId && String(a.assigneeId) === String(currentUser?.id)) || 
+        (a.assignee === currentUser?.name)
+    );
 
     // Add real deliveries assigned to this driver
-    const myDeliveries = deliveries.filter(d => d.driver === currentUser?.name && d.status !== 'Delivered' && d.status !== 'Completed');
+    const myDeliveries = deliveries.filter(d => 
+        (d.driverId && String(d.driverId) === String(currentUser?.id)) ||
+        (d.driver === currentUser?.name)
+    );
 
     const pendingAssignments = staffAssignments.filter(a => a.status === 'Pending' && !a.assigneeId);
 
@@ -68,8 +74,14 @@ const EmployeePortal = () => {
         asg.location?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         String(asg.id || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
-    const myPayHistory = payHistory.filter(p => p.userId === currentUser?.id || p.userName === currentUser?.name);
+
+    const myPayHistory = payHistory.filter(p => 
+        (p.userId && String(p.userId) === String(currentUser?.id)) || 
+        (p.userName === currentUser?.name)
+    );
+
     const totalYTD = myPayHistory.reduce((acc, p) => acc + parseFloat((p.total || "0").replace('$', '').replace(',', '') || 0), 0);
+    
     const [shiftStatus, setShiftStatus] = useState(() => localStorage.getItem('shiftStatus') || 'Off Duty');
     const [shiftStartTime, setShiftStartTime] = useState(() => {
         const savedTime = localStorage.getItem('shiftStartTime');
@@ -80,7 +92,7 @@ const EmployeePortal = () => {
     useEffect(() => {
         let timer;
         if (shiftStatus === 'On Duty') {
-            timer = setInterval(() => setCurrentTime(new Date()), 1000); // Update every second
+            timer = setInterval(() => setCurrentTime(new Date()), 1000);
         }
         return () => clearInterval(timer);
     }, [shiftStatus]);
@@ -117,7 +129,6 @@ const EmployeePortal = () => {
     const handleStatusChange = (asg, newStatus, proofData = null) => {
         const updatedAsg = { ...asg, status: newStatus, ...proofData };
         
-        // If claiming a pending task, set current user as assignee
         if (asg.status === 'Pending' && !asg.assigneeId) {
             updatedAsg.assigneeId = currentUser?.id;
             updatedAsg.assignee = currentUser?.name;
@@ -130,16 +141,32 @@ const EmployeePortal = () => {
             type: 'system'
         });
 
-        // If it's a delivery completion, trigger delivery update too
         const matchingDel = deliveries.find(d => d.orderId === asg.orderId || d.id === asg.deliveryId || d.taskRef === asg.id);
         if (newStatus === 'Completed' && matchingDel) {
             updateDelivery({ ...matchingDel, status: 'Delivered', deliveredAt: new Date().toISOString() });
         }
     };
 
+    const completedTodayCount = myAssignments.filter(a => {
+        if (a.status !== 'Completed') return false;
+        const date = new Date(a.updatedAt || a.date);
+        const today = new Date();
+        return date.toDateString() === today.toDateString();
+    }).length;
+
     const dashboardStats = [
-        { label: "Remaining Tasks", value: myAssignments.filter(a => a.status !== 'Completed').length.toString(), icon: ClipboardList, color: "text-accent" },
-        { label: "Completed Today", value: "4", icon: CheckCircle2, color: "text-success" },
+        { 
+            label: "Remaining Tasks", 
+            value: myAssignments.filter(a => !['Completed', 'Cancelled'].includes(a.status)).length.toString(), 
+            icon: ClipboardList, 
+            color: "text-accent" 
+        },
+        { 
+            label: "Completed Today", 
+            value: completedTodayCount.toString(), 
+            icon: CheckCircle2, 
+            color: "text-success" 
+        },
         {
             label: "Shift Duration",
             value: (() => {
@@ -431,12 +458,19 @@ const EmployeePortal = () => {
                             <div className="flex justify-center gap-8 mt-8">
                                 <div>
                                     <p className="text-[10px] font-black text-muted uppercase tracking-widest">Base Rate</p>
-                                    <p className="text-xl font-black text-accent italic tracking-tighter">$20.00/hr</p>
+                                    <p className="text-xl font-black text-accent italic tracking-tighter">${currentUser?.baseRate || '25.00'}/hr</p>
                                 </div>
                                 <div className="w-[1px] h-10 bg-white/10" />
                                 <div>
                                     <p className="text-[10px] font-black text-muted uppercase tracking-widest">Next Payout</p>
-                                    <p className="text-xl font-black text-success italic tracking-tighter">Mar 1st</p>
+                                    <p className="text-xl font-black text-success italic tracking-tighter">
+                                        {(() => {
+                                            const d = new Date();
+                                            d.setDate(d.getDate() + (5 + 7 - d.getDay()) % 7);
+                                            if (d.toDateString() === new Date().toDateString()) d.setDate(d.getDate() + 7);
+                                            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                        })()}
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -505,7 +539,7 @@ const EmployeePortal = () => {
                         <div className="glass-card p-6">
                             <h4 className="text-sm font-black uppercase tracking-widest text-muted mb-6">My Request History</h4>
                             <div className="space-y-4">
-                                {leaveRequests.filter(r => r.userId === currentUser?.id || r.name === currentUser?.name).map(req => (
+                                {leaveRequests.filter(r => (r.userId && String(r.userId) === String(currentUser?.id)) || r.name === currentUser?.name).map(req => (
                                     <div key={req.id} className="p-4 bg-white/[0.02] border border-border rounded-2xl flex justify-between items-center group hover:border-accent/30 transition-all">
                                         <div className="flex items-center gap-4">
                                             <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${req.status === 'Approved' ? 'bg-success/10 text-success' :
@@ -536,7 +570,7 @@ const EmployeePortal = () => {
                                         </div>
                                     </div>
                                 ))}
-                                {leaveRequests.filter(r => r.userId === currentUser.id || r.name === currentUser.name).length === 0 && (
+                                {leaveRequests.filter(r => (r.userId && String(r.userId) === String(currentUser?.id)) || r.name === currentUser?.name).length === 0 && (
                                     <p className="text-center py-8 text-secondary italic">No absence records found in the portal.</p>
                                 )}
                             </div>

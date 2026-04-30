@@ -11,13 +11,21 @@ import { motion, AnimatePresence } from 'framer-motion';
 import StatusBadge from '../../components/StatusBadge';
 
 const Invoices = () => {
-    const { invoices, orders, clients, addInvoice, settleInvoice, updateInvoice, deleteInvoice, currentUser, fetchFinance, fetchOrders, fetchClients, hasMenuPermission } = useData();
+    const { invoices, orders, clients, customerUsers, addInvoice, settleInvoice, updateInvoice, deleteInvoice, currentUser, fetchFinance, fetchOrders, fetchClients, fetchCustomerUsers, hasMenuPermission } = useData();
 
     React.useEffect(() => {
         fetchFinance();
         fetchOrders();
         fetchClients();
-    }, [fetchFinance, fetchOrders, fetchClients]);
+        fetchCustomerUsers();
+    }, [fetchFinance, fetchOrders, fetchClients, fetchCustomerUsers]);
+
+    // Merge company clients + personal customers for the dropdown
+    const allClientsForDropdown = React.useMemo(() => {
+        const companyClients = clients.map(c => ({ id: c.id, name: c.name || c.companyName, type: 'company' }));
+        const personal = (customerUsers || []).map(u => ({ id: `user_${u.id}`, name: u.name, type: 'customer' }));
+        return [...companyClients, ...personal];
+    }, [clients, customerUsers]);
     const isClient = currentUser?.role?.toLowerCase() === 'client';
     const isSuperAdmin = currentUser?.role?.toLowerCase().replace(/\s/g, '') === 'superadmin';
 
@@ -38,17 +46,29 @@ const Invoices = () => {
         dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
     });
 
+    // Lookup a client by id from both company clients and personal customers
+    const findClientById = (id) => {
+        if (!id) return null;
+        const idStr = String(id);
+        const fromCompany = clients.find(c => String(c.id) === idStr);
+        if (fromCompany) return fromCompany;
+        const numId = idStr.startsWith('user_') ? idStr.replace('user_', '') : idStr;
+        const fromCustomers = (customerUsers || []).find(u => String(u.id) === numId);
+        return fromCustomers ? { ...fromCustomers, name: fromCustomers.name } : null;
+    };
+
     const filteredInvoices = invoices.filter(inv => {
         const matchesClient = isClient ? (inv.clientId === currentUser?.clientId) : true;
+        const clientName = findClientById(inv.clientId)?.name || inv.clientName || '';
         const matchesSearch = String(inv.id).toLowerCase().includes(searchTerm.toLowerCase()) ||
             String(inv.orderId).toLowerCase().includes(searchTerm.toLowerCase()) ||
-            clients.find(c => String(c.id) === String(inv.clientId))?.name?.toLowerCase().includes(searchTerm.toLowerCase());
+            clientName.toLowerCase().includes(searchTerm.toLowerCase());
         return matchesClient && matchesSearch;
     });
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        const client = clients.find(c => c.id === formData.clientId);
+        const client = findClientById(formData.clientId);
         if (modalType === 'add') {
             addInvoice({
                 ...formData,
@@ -74,7 +94,7 @@ const Invoices = () => {
             header: "Client",
             accessor: "clientId",
             render: (row) => {
-                const client = clients.find(c => String(c.id) === String(row.clientId));
+                const client = findClientById(row.clientId);
                 return (
                     <div className="flex flex-col">
                         <span className="font-bold">{client?.name || row.clientName || 'Institutional Asset'}</span>
@@ -282,9 +302,20 @@ const Invoices = () => {
                                         required
                                     >
                                         <option value="">Choose Client...</option>
-                                        {clients.map(c => (
-                                            <option key={c.id} value={c.id}>{c.name} ({c.id})</option>
-                                        ))}
+                                        {clients.length > 0 && (
+                                            <optgroup label="Company Clients">
+                                                {clients.map(c => (
+                                                    <option key={c.id} value={c.id}>{c.name || c.companyName}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
+                                        {customerUsers?.length > 0 && (
+                                            <optgroup label="Personal Customers">
+                                                {customerUsers.map(u => (
+                                                    <option key={`user_${u.id}`} value={`user_${u.id}`}>{u.name}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
                                     </select>
                                 </div>
                                 <div className="space-y-2">
