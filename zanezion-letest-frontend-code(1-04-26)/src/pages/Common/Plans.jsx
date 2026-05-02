@@ -8,12 +8,44 @@ import Modal from '../../components/Modal';
 import { useData } from '../../context/GlobalDataContext';
 
 const Plans = () => {
-    const { activePlan, setActivePlan, addLog, accessPlans, fetchAccessPlans, dispatchSubscriptionRequest } = useData();
+    const { activePlan, setActivePlan, addLog, accessPlans, fetchAccessPlans, dispatchSubscriptionRequest, currentUser, setCurrentUser } = useData();
+
     const [activatingPlan, setActivatingPlan] = useState(null);
     const [billingCycle, setBillingCycle] = useState('monthly'); // 'monthly' or 'yearly'
     const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
     const [selectedPlan, setSelectedPlan] = useState(null);
     const [requestFormData, setRequestFormData] = useState({ companyName: '', contactPerson: '', email: '', phone: '', country: '', requirements: '' });
+
+    const CONCIERGE_PERKS = [
+        'Event services',
+        'Guest requests — errand services',
+        'Product sourcing & personal shopping',
+        'Package pickup / delivery',
+        'Document pickup / delivery',
+        'Custom luxury requests',
+        'Luxury item vault & storage hub',
+        'Chauffeur services co-ordination',
+    ];
+
+    const handleConciergeMembership = () => {
+        if (!currentUser) {
+            swalWarning('Sign in required', 'Log in from the portal menu to activate Concierge Lifestyle membership.');
+            return;
+        }
+        const next = {
+            ...currentUser,
+            concierge_member: true,
+            concierge_membership_since: new Date().toISOString().slice(0, 10),
+            concierge_fee_usd: 9.99,
+        };
+        localStorage.setItem('user', JSON.stringify(next));
+        setCurrentUser(next);
+        addLog({ action: 'Concierge Upgrade', detail: 'User subscribed to Lifestyle membership ($9.99/mo).', type: 'system' });
+        swalSuccess(
+            'Membership activated locally',
+            'Concierge Lifestyle ($9.99/mo subscription fee only — billed separately from fulfilment services) is flagged on your account. Connect Stripe or your billing ledger for recurring charges.'
+        );
+    };
 
     const handleActivate = (plan) => {
         if (plan.name === activePlan) return;
@@ -73,6 +105,45 @@ const Plans = () => {
                     <p className="text-secondary text-lg leading-relaxed">
                         Elevated logistics and lifestyle coordination tailored for the most discerning clients.
                     </p>
+                </div>
+            </div>
+
+            {/* Concierge membership (personal concierge tier) */}
+            <div className="glass-card p-8 lg:p-12 border-accent/25 bg-white/[0.02] rounded-3xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-72 h-72 bg-accent/5 rounded-full blur-3xl -mr-28 -mt-28 pointer-events-none" />
+                <div className="relative z-10 flex flex-col lg:flex-row lg:items-center gap-10 justify-between">
+                    <div className="max-w-xl space-y-6">
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-accent mb-2">Upgrade my account</p>
+                            <h2 className="text-2xl lg:text-3xl font-black text-white tracking-tight italic">Concierge Lifestyle Membership</h2>
+                            <p className="text-accent text-3xl font-black mt-2">$9.99<span className="text-sm text-muted font-bold not-italic"> / month</span></p>
+                            <p className="text-secondary text-xs mt-2 leading-relaxed">Membership covers platform perks only — every fulfilment quote (logistics, procurement, chauffeur hours, bespoke sourcing, etc.) is billed as its own line item.</p>
+                        </div>
+                        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {CONCIERGE_PERKS.map((line) => (
+                                <li key={line} className="flex items-start gap-2 text-xs text-secondary">
+                                    <Check className="text-accent shrink-0 mt-0.5" size={14} />
+                                    <span>{line}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                    <div className="flex flex-col items-stretch lg:items-end gap-4 min-w-[220px]">
+                        {currentUser?.concierge_member ? (
+                            <div className="px-8 py-4 rounded-2xl border border-success/30 bg-success/10 text-success text-[10px] font-black uppercase tracking-widest text-center lg:text-right">
+                                Active concierge member
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={handleConciergeMembership}
+                                className="px-10 py-5 rounded-2xl bg-accent text-black text-[11px] font-black uppercase tracking-[0.3em] hover:brightness-110 transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-2"
+                            >
+                                Upgrade my account <ChevronRight size={18} />
+                            </button>
+                        )}
+                        <p className="text-[10px] text-muted text-center lg:text-right max-w-[280px]">Flag stored on your login profile · wire billing integration when your PSP is ready.</p>
+                    </div>
                 </div>
             </div>
 

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useData } from '../../context/GlobalDataContext';
+import { normalizeRole } from '../../utils/authUtils';
 
 const priorityColors = {
     High: 'bg-danger/20 text-danger border-danger/30',
@@ -31,10 +32,31 @@ const ClientSupport = () => {
         message: ''
     });
 
-    // Filter tickets belonging to this client
-    const myTickets = supportTickets?.filter(t =>
-        t.clientId === currentUser?.clientId || t.clientName === currentUser?.name
-    ) || [];
+    const roleKey = normalizeRole(currentUser?.role);
+    const isEndCustomerRole = ['customer', 'client', 'saas_client', 'admin'].includes(roleKey);
+    // Privacy guard: end-customer roles only see tickets they personally created.
+    const myTickets = supportTickets?.filter((t) => {
+        const sameOwnerId =
+            String(t.createdById ?? '') !== '' &&
+            String(currentUser?.id ?? '') !== '' &&
+            String(t.createdById) === String(currentUser?.id);
+        const sameOwnerEmail =
+            String(t.createdByEmail || '').toLowerCase() !== '' &&
+            String(t.createdByEmail || '').toLowerCase() === String(currentUser?.email || '').toLowerCase();
+        const sameOwnerName =
+            String(t.createdByName || '').toLowerCase() !== '' &&
+            String(t.createdByName || '').toLowerCase() === String(currentUser?.name || '').toLowerCase();
+        const sameClientAndOwnerName =
+            String(t.clientId ?? '') !== '' &&
+            String(currentUser?.clientId ?? '') !== '' &&
+            String(t.clientId) === String(currentUser?.clientId) &&
+            String(t.clientName || '').toLowerCase() === String(currentUser?.name || '').toLowerCase();
+
+        if (isEndCustomerRole) {
+            return sameOwnerId || sameOwnerEmail || sameOwnerName || sameClientAndOwnerName;
+        }
+        return true;
+    }) || [];
 
     const openTicket = (ticket) => {
         setSelectedTicket(ticket);
@@ -64,6 +86,9 @@ const ClientSupport = () => {
             id: `TKT-${Math.floor(200 + Math.random() * 799)}`,
             clientId: currentUser?.clientId || 'CLT-GUEST',
             clientName: currentUser?.name || 'Client',
+            createdById: currentUser?.id || null,
+            createdByEmail: currentUser?.email || null,
+            createdByName: currentUser?.name || null,
             subject: newTicket.subject,
             category: newTicket.category,
             priority: newTicket.priority,
@@ -94,7 +119,7 @@ const ClientSupport = () => {
                         {activeView === 'new' ? 'New Support Case' : activeView === 'chat' ? selectedTicket?.subject : 'Support Command'}
                     </h1>
                     <p className="text-secondary text-[10px] mt-1 font-black uppercase tracking-[0.15em] opacity-70 italic">
-                        {activeView === 'list' ? '24/7 dedicated institutional assistance' : activeView === 'new' ? 'Submit your request to our concierge team' : `Case ${selectedTicket?.id}`}
+                        {activeView === 'list' ? '24/7 dedicated institutional assistance' : activeView === 'new' ? 'Submit your request to our support team' : `Case ${selectedTicket?.id}`}
                     </p>
                 </div>
                 {activeView === 'list' && (

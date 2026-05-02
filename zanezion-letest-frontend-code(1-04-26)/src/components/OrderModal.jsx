@@ -3,9 +3,26 @@ import Modal from './Modal';
 import { Clock, MapPin, Plus, Trash2, Tag, DollarSign, Package, Printer } from 'lucide-react';
 import CustomDatePicker from './CustomDatePicker';
 import { useData } from '../context/GlobalDataContext';
+import { ORDER_STATUS_OPTIONS, coerceOrderStatusToApi, isoDateSlice, displayOrderStatus } from '../utils/orderWorkflow';
+import { normalizeRole, roleCanCreateInstitutionalOrder } from '../utils/authUtils';
+
+const todayIso = () => new Date().toISOString().split('T')[0];
+const normalizeIsoDate = (v) => {
+    if (!v) return '';
+    const d = isoDateSlice(v);
+    return d || '';
+};
+const clampDueDateToRequest = (requestDate, dueDate) => {
+    const req = normalizeIsoDate(requestDate) || todayIso();
+    const due = normalizeIsoDate(dueDate) || req;
+    return due < req ? req : due;
+};
 
 const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelete, initialData, role }) => {
     const { currentUser, vendors, clients, fetchVendors, fetchClients, customerUsers, fetchCustomerUsers } = useData();
+    const portalRole = normalizeRole(role || currentUser?.role || '');
+    const isPersonalCustomer = portalRole === 'customer';
+    const canCreateManualOrder = roleCanCreateInstitutionalOrder(portalRole);
 
     useEffect(() => {
         if (isOpen) {
@@ -47,7 +64,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
         clientId: '',
         items: [{ name: '', qty: 1, price: '' }],
         location: '',
-        status: 'Pending',
+        status: 'created',
         requestDate: new Date().toISOString().split('T')[0],
         dueDate: new Date().toISOString().split('T')[0],
         department: '',
@@ -70,19 +87,21 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
 
     useEffect(() => {
         // For client/customer role, find their customer record by email for proper name
-        const myCustomerRecord = (role === 'client' || role === 'customer')
+        const myCustomerRecord = (portalRole === 'client' || portalRole === 'customer')
             ? clients.find(c => c.email?.toLowerCase() === currentUser?.email?.toLowerCase()) || null
             : null;
 
         if (modalType === 'add') {
+            const requestDate = normalizeIsoDate(initialData?.requestDate) || todayIso();
+            const dueDate = clampDueDateToRequest(requestDate, initialData?.dueDate || initialData?.date);
             setFormData({
                 items: initialData?.items || [{ name: initialData?.product || '', qty: 1, price: initialData?.price || '' }],
                 location: initialData?.location || '',
-                status: 'Pending',
-                requestDate: initialData?.requestDate || new Date().toISOString().split('T')[0],
-                dueDate: initialData?.dueDate || initialData?.date || new Date().toISOString().split('T')[0],
-                client: (role === 'client' || role === 'customer') ? (myCustomerRecord?.name || currentUser?.name) : (initialData?.client && initialData.client !== 'Select Client...' ? initialData.client : ''),
-                clientId: (role === 'client' || role === 'customer') ? (myCustomerRecord?.id || currentUser?.id) : (initialData?.clientId || ''),
+                status: coerceOrderStatusToApi(initialData?.status, 'created'),
+                requestDate,
+                dueDate,
+                client: (portalRole === 'client' || portalRole === 'customer') ? (myCustomerRecord?.name || currentUser?.name) : (initialData?.client && initialData.client !== 'Select Client...' ? initialData.client : ''),
+                clientId: (portalRole === 'client' || portalRole === 'customer') ? (myCustomerRecord?.id || currentUser?.id) : (initialData?.clientId || ''),
                 department: initialData?.department || '',
                 vendor: initialData?.vendor || '',
                 vendorId: initialData?.vendorId || '',
@@ -92,6 +111,8 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
             });
         } else if (selectedOrder) {
             const parsedItems = typeof selectedOrder.items === 'string' ? JSON.parse(selectedOrder.items) : selectedOrder.items;
+            const requestDate = normalizeIsoDate(selectedOrder.requestDate || selectedOrder.order_date || selectedOrder.created_at) || todayIso();
+            const dueDate = clampDueDateToRequest(requestDate, selectedOrder.dueDate || selectedOrder.due_date);
             // Try to match existing order's client in dropdown list
             const existingClientId = selectedOrder.clientId || selectedOrder.client_id || '';
             const matchedDropdown = allClientsForDropdown.find(c =>
@@ -103,9 +124,9 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                 clientDropdownId: matchedDropdown?.id || '',
                 items: (Array.isArray(parsedItems) && parsedItems.length > 0) ? parsedItems : [{ name: selectedOrder.product || '', qty: parseInt(selectedOrder.qty) || 1, price: selectedOrder.price ?? '' }],
                 location: selectedOrder.location || '',
-                status: selectedOrder.status || 'Pending',
-                requestDate: selectedOrder.requestDate || selectedOrder.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0],
-                dueDate: selectedOrder.dueDate || selectedOrder.date || (selectedOrder.deliveryTime ? selectedOrder.deliveryTime : new Date().toISOString().split('T')[0]),
+                status: coerceOrderStatusToApi(selectedOrder.status, 'created'),
+                requestDate,
+                dueDate,
                 department: selectedOrder.department || '',
                 vendor: selectedOrder.vendor || '',
                 vendorId: selectedOrder.vendorId || selectedOrder.vendor_id || '',
@@ -124,7 +145,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                 amenities: selectedOrder.amenities || ''
             });
         }
-    }, [modalType, selectedOrder, isOpen, initialData, role, currentUser?.name]);
+    }, [modalType, selectedOrder, isOpen, initialData, portalRole, currentUser?.name]);
 
     const handleAddItem = () => {
         setFormData({ ...formData, items: [...formData.items, { name: '', qty: 1, price: '' }] });
@@ -149,7 +170,13 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        onSave({ ...formData, total: parseFloat(calculateTotal()) });
+        if (modalType === 'add' && !canCreateManualOrder) {
+            window.alert('Only staff can create orders. Customers can use Marketplace and view their orders.');
+            return;
+        }
+        const requestDate = normalizeIsoDate(formData.requestDate) || todayIso();
+        const dueDate = clampDueDateToRequest(requestDate, formData.dueDate);
+        onSave({ ...formData, requestDate, dueDate, total: parseFloat(calculateTotal()) });
     };
 
     return (
@@ -188,18 +215,15 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                         value={formData.status}
                                         onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                                         className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
-                                        disabled={modalType === 'view' || role === 'client' || role === 'customer'}
+                                        disabled={modalType === 'view' || isPersonalCustomer}
                                     >
-                                        <option value="Pending">Pending</option>
-                                        <option value="Processing">Processing</option>
-                                        <option value="Approved">Approved</option>
-                                        <option value="Shipped">Shipped</option>
-                                        <option value="Delivered">Delivered</option>
-                                        <option value="Cancelled">Cancelled</option>
+                                        {ORDER_STATUS_OPTIONS.map(({ value, label }) => (
+                                            <option key={value} value={value}>{label}</option>
+                                        ))}
                                     </select>
                                 </div>
                             )}
-                            {role !== 'client' && role !== 'customer' && (
+                            {portalRole !== 'client' && portalRole !== 'customer' && (
                                 <div className={`space-y-1 ${modalType === 'add' ? 'col-span-1 md:col-span-2' : ''}`}>
                                     <label className="text-[10px] font-bold text-muted uppercase">
                                         Client / Customer
@@ -357,20 +381,6 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                     />
                                 </div>
                             </div>
-                            <div className="space-y-1">
-                                <label className="text-[10px] font-bold text-muted uppercase">Status</label>
-                                <select
-                                    value={modalType === 'view' ? selectedOrder?.status : formData.status}
-                                    onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
-                                    disabled={modalType === 'view'}
-                                >
-                                    <option>Pending</option>
-                                    <option>Shipped</option>
-                                    <option>Delivered</option>
-                                    <option>Processing</option>
-                                </select>
-                            </div>
                             <div className="space-y-3 pt-2">
                                 <div className="flex items-center justify-between">
                                     <label className="text-[10px] font-bold text-muted uppercase">Vendor (Optional)</label>
@@ -402,8 +412,10 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                             <div className="space-y-1">
                                 <CustomDatePicker
                                     label="Due Date"
-                                    selectedDate={modalType === 'view' ? (selectedOrder?.dueDate || selectedOrder?.date || '2024-05-28') : formData.dueDate}
-                                    onChange={(date) => setFormData({ ...formData, dueDate: date })}
+                                    selectedDate={modalType === 'view'
+                                        ? (isoDateSlice(selectedOrder?.due_date || selectedOrder?.dueDate) || isoDateSlice(formData.dueDate))
+                                        : formData.dueDate}
+                                    onChange={(date) => setFormData({ ...formData, dueDate: clampDueDateToRequest(formData.requestDate, date) })}
                                 />
                                 {modalType === 'view' && selectedOrder?.createdAt && (
                                     <p className="text-[9px] text-muted italic mt-1">Requested On: {new Date(selectedOrder.createdAt).toLocaleDateString()}</p>
@@ -528,7 +540,9 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                     <Printer size={16} /> Print Acknowledgement
                                 </button>
                             )}
-                            {modalType !== 'view' && <button type="submit" className="btn-primary">Save Order</button>}
+                            {modalType !== 'view' && canCreateManualOrder && (
+                                <button type="submit" className="btn-primary">Save Order</button>
+                            )}
                         </div>
                     </div>
                 )}
@@ -565,7 +579,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                         </div>
                         <div className="text-right">
                             <div className="inline-block bg-black text-white px-3 py-1 rounded-sm transform -skew-x-12">
-                                <p className="text-[8px] font-black uppercase tracking-widest skew-x-12 leading-none">Status: {formData.status}</p>
+                                <p className="text-[8px] font-black uppercase tracking-widest skew-x-12 leading-none">Status: {displayOrderStatus(selectedOrder?.status || formData.status)}</p>
                             </div>
                             <div className="mt-2">
                                 <p className="text-[6px] font-black uppercase tracking-widest opacity-40 mb-0.5 leading-none">Required By:</p>

@@ -3,7 +3,7 @@ import { AlertTriangle, Bell, Clock, Filter, CheckCircle2 } from 'lucide-react';
 import { useData } from '../../context/GlobalDataContext';
 
 const InventoryAlerts = () => {
-    const { inventoryAlerts, fetchInventoryAlerts } = useData();
+    const { inventoryAlerts, fetchInventoryAlerts, acknowledgeInventoryAlert } = useData();
 
     React.useEffect(() => {
         fetchInventoryAlerts();
@@ -71,7 +71,12 @@ const InventoryAlerts = () => {
                                         <Clock size={12} /> Detected 12m ago
                                     </p>
                                 </div>
-                                <button className="p-3 bg-white/5 hover:bg-white/10 rounded-xl text-secondary transition-colors" title="Mark as Read">
+                                <button
+                                    type="button"
+                                    onClick={() => acknowledgeInventoryAlert(alert.id)}
+                                    className="p-3 bg-white/5 hover:bg-success/20 hover:text-success rounded-xl text-secondary transition-colors"
+                                    title="Dismiss alert"
+                                >
                                     <CheckCircle2 size={20} />
                                 </button>
                             </div>

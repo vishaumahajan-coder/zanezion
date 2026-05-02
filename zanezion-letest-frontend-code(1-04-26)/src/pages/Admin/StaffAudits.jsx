@@ -7,7 +7,8 @@ import {
     Search, Filter, Loader2, AlertCircle, ExternalLink,
     MapPin, Smartphone, Briefcase
 } from 'lucide-react';
-import api from '../../utils/api';
+import api, { BACKEND_ORIGIN } from '../../utils/api';
+import { addBlockedStaffEmail, removeBlockedStaffEmail } from '../../utils/staffLoginGate';
 
 const StaffAudits = () => {
     const [pendingStaff, setPendingStaff] = useState([]);
@@ -39,6 +40,13 @@ const StaffAudits = () => {
             setIsReviewing(true);
             const res = await api.put(`/auth/staff-review/${id}`, { status });
             if (res.data.success) {
+                const staff = pendingStaff.find(s => s.id === id) || selectedStaff;
+                const em = staff?.email;
+                if (em) {
+                    const st = String(status).toLowerCase();
+                    if (st === 'active') removeBlockedStaffEmail(em);
+                    if (['inactive', 'not_selected', 'rejected', 'not selected'].includes(st)) addBlockedStaffEmail(em);
+                }
                 setPendingStaff(prev => prev.filter(s => s.id !== id));
                 setSelectedStaff(null);
                 swalSuccess("Updated", res.data.message);
@@ -57,7 +65,8 @@ const StaffAudits = () => {
 
     const getFullUrl = (path) => {
         if (!path) return null;
-        return `http://localhost:5000${path}`;
+        if (String(path).startsWith('http')) return path;
+        return `${BACKEND_ORIGIN}${String(path).startsWith('/') ? '' : '/'}${path}`;
     };
 
     if (loading) {
@@ -202,7 +211,8 @@ const StaffAudits = () => {
                                         </div>
                                     </div>
 
-                                    <div className="flex gap-4 pt-4">
+                                    <div className="flex flex-col gap-3 pt-4">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         <button 
                                             onClick={() => handleReview(selectedStaff.id, 'Inactive')}
                                             disabled={isReviewing}
@@ -211,11 +221,19 @@ const StaffAudits = () => {
                                             <XCircle size={16} /> Deny Entry
                                         </button>
                                         <button 
+                                            onClick={() => handleReview(selectedStaff.id, 'Not_Selected')}
+                                            disabled={isReviewing}
+                                            className="flex-1 py-4 bg-orange-500/10 border border-orange-500/30 text-orange-400 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-500 hover:text-black transition-all flex items-center justify-center gap-2"
+                                        >
+                                            <XCircle size={16} /> Not selected
+                                        </button>
+                                        </div>
+                                        <button 
                                             onClick={() => handleReview(selectedStaff.id, 'Active')}
                                             disabled={isReviewing}
-                                            className="flex-1 py-4 bg-accent text-black rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-white transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-2"
+                                            className="w-full py-4 bg-accent text-black rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-white transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-2"
                                         >
-                                            <CheckCircle size={16} /> Authorize
+                                            <CheckCircle size={16} /> Authorize (activate)
                                         </button>
                                     </div>
                                 </div>

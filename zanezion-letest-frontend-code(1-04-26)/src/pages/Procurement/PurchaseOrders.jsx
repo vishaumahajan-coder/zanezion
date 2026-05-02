@@ -9,8 +9,11 @@ import { useData } from '../../context/GlobalDataContext';
 import StatusBadge from '../../components/StatusBadge';
 import Pagination from '../../components/Common/Pagination';
 
+const isApprovedVendor = (v) => String(v?.status ?? 'active').toLowerCase() === 'active';
+
 const PurchaseOrders = () => {
-    const { purchaseOrders, vendors, addPurchaseOrder, updatePurchaseOrder, receiveGoodsAgainstPO, fetchPurchaseOrders, fetchVendors, currentUser } = useData();
+    const { purchaseOrders, vendors, addPurchaseOrder, updatePurchaseOrder, receiveGoodsAgainstPO, reverseGoodsReceipt, fetchPurchaseOrders, fetchVendors, currentUser } = useData();
+    const approvedVendors = React.useMemo(() => (vendors || []).filter(isApprovedVendor), [vendors]);
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -22,6 +25,7 @@ const PurchaseOrders = () => {
     const [showEditModal, setShowEditModal] = useState(false);
     const [showReceiveModal, setShowReceiveModal] = useState(false);
     const [showViewModal, setShowViewModal] = useState(false);
+    const [showReverseModal, setShowReverseModal] = useState(false);
     const [selectedPO, setSelectedPO] = useState(null);
     const [poItems, setPoItems] = useState([{ id: Date.now(), name: '', quantity: 1, price: 0, category: '' }]);
 
@@ -72,7 +76,11 @@ const PurchaseOrders = () => {
         e.preventDefault();
         const formData = new FormData(e.target);
         const vendorId = formData.get('vendorId');
-        const vendor = vendors.find(v => v.id === vendorId);
+        const vendor = approvedVendors.find(v => String(v.id) === String(vendorId));
+        if (!vendorId || !vendor) {
+            window.alert('Choose an approved vendor. Vendors stay unavailable for POs until Super Admin activates them.');
+            return;
+        }
 
         const items = poItems.map(item => ({
             id: item.id,
@@ -134,6 +142,26 @@ const PurchaseOrders = () => {
 
         receiveGoodsAgainstPO(selectedPO.id, receivedData);
         setShowReceiveModal(false);
+        setSelectedPO(null);
+    };
+
+    const handleReverseReceipt = (e) => {
+        e.preventDefault();
+        if (!selectedPO?.items?.length) return;
+        const lineAdjustments = selectedPO.items.map((it) => ({
+            id: it.id,
+            reduceBy: Math.min(
+                Number(e.target[`rev_${it.id}`]?.value) || 0,
+                Number(it.receivedQty) || 0
+            ),
+        })).filter((a) => a.reduceBy > 0);
+        if (!lineAdjustments.length) {
+            window.alert('Enter units to reverse (cannot exceed received quantity).');
+            return;
+        }
+        reverseGoodsReceipt(selectedPO.id, lineAdjustments);
+        setShowReverseModal(false);
+        setShowViewModal(false);
         setSelectedPO(null);
     };
 
@@ -360,15 +388,20 @@ const PurchaseOrders = () => {
                                             disabled={showEditModal}
                                             required
                                         >
-                                            {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                                            {approvedVendors.length === 0 ? (
+                                                <option value="">No approved vendors — HQ approval required</option>
+                                            ) : (
+                                                approvedVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)
+                                            )}
                                         </select>
                                     </div>
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-black text-muted uppercase tracking-widest pl-1">Payment Terms</label>
                                         <select 
+                                            key={`paymentTerms-${selectedPO?.id}-${showEditModal ? 'e' : 'c'}`}
                                             name="paymentTerms" 
                                             className="w-full bg-background border border-border rounded-2xl px-5 py-4 text-sm text-white focus:outline-none focus:border-accent appearance-none font-bold italic uppercase tracking-wider cursor-pointer"
-                                            defaultValue={selectedPO?.paymentTerms || 'Net 30'}
+                                            defaultValue={selectedPO?.paymentTerms || selectedPO?.payment_terms || 'Net 30'}
                                             required
                                         >
                                             <option>Net 5</option>
@@ -643,9 +676,54 @@ const PurchaseOrders = () => {
                                     </div>
                                 </div>
                             </div>
-                            <div className="p-6 border-t border-border flex justify-end">
-                                <button onClick={() => setShowViewModal(false)} className="px-8 py-3 bg-white/5 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-white/10 transition-all">Close Viewer</button>
+                            <div className="p-6 border-t border-border flex flex-wrap justify-between gap-3 items-center">
+                                {(selectedPO.items || []).some((i) => (Number(i.receivedQty) || 0) > 0) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowReverseModal(true)}
+                                        className="px-6 py-3 bg-warning/15 border border-warning/40 text-warning text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-warning hover:text-black transition-all"
+                                    >
+                                        Reverse / correct receipt
+                                    </button>
+                                )}
+                                <button type="button" onClick={() => setShowViewModal(false)} className="px-8 py-3 bg-white/5 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-white/10 transition-all ml-auto">Close Viewer</button>
                             </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {showReverseModal && selectedPO && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowReverseModal(false)} />
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            className="relative z-10 w-full max-w-lg bg-sidebar border border-border rounded-3xl p-8 shadow-2xl"
+                        >
+                            <h3 className="text-lg font-black text-white uppercase italic mb-2">Reverse received quantity</h3>
+                            <p className="text-[10px] text-secondary mb-6 font-bold uppercase tracking-widest">Use when goods were logged incorrectly. Max = received per line.</p>
+                            <form onSubmit={handleReverseReceipt} className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
+                                {(selectedPO.items || []).map((it) => (
+                                    <div key={it.id} className="flex items-center justify-between gap-3 p-3 bg-white/[0.03] rounded-xl border border-white/10">
+                                        <span className="text-xs font-bold text-white truncate flex-1">{it.name}</span>
+                                        <span className="text-[10px] text-muted whitespace-nowrap">Rcvd {it.receivedQty || 0}</span>
+                                        <input
+                                            type="number"
+                                            name={`rev_${it.id}`}
+                                            min="0"
+                                            max={it.receivedQty || 0}
+                                            defaultValue={0}
+                                            className="w-20 bg-background border border-border rounded-lg px-2 py-2 text-sm text-center"
+                                        />
+                                    </div>
+                                ))}
+                                <div className="flex gap-3 pt-4">
+                                    <button type="button" onClick={() => setShowReverseModal(false)} className="flex-1 py-3 bg-white/5 rounded-xl text-[10px] font-black uppercase">Cancel</button>
+                                    <button type="submit" className="flex-1 py-3 bg-accent text-black rounded-xl text-[10px] font-black uppercase">Apply reversal</button>
+                                </div>
+                            </form>
                         </motion.div>
                     </div>
                 )}

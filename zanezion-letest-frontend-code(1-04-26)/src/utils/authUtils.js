@@ -30,6 +30,23 @@ export const normalizeRole = (role) => {
     return 'staff';
 };
 
+/** Roles allowed to create institutional / manual orders (Order Management modal — not marketplace checkout). */
+const INSTITUTIONAL_ORDER_CREATOR_ROLES = new Set([
+    'superadmin',
+    'operations',
+    'procurement',
+    'logistics',
+    'inventory',
+    'concierge',
+    'admin',
+    'staff',
+]);
+
+export function roleCanCreateInstitutionalOrder(role) {
+    const key = normalizeRole(role);
+    return INSTITUTIONAL_ORDER_CREATOR_ROLES.has(key);
+}
+
 export const normalizeMenuPathBase = (path) => {
     if (!path) return '';
     const base = String(path).trim().split('?')[0];

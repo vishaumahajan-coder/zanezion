@@ -5,6 +5,7 @@ import { useData } from '../../context/GlobalDataContext';
 import RequestModal from '../../components/RequestModal';
 import Pagination from '../../components/Common/Pagination';
 import { normalizeRole } from '../../utils/authUtils';
+import { formatDateTimeEst } from '../../utils/dateEst';
 
 const PurchaseRequests = () => {
   const { purchaseRequests, addPurchaseRequest, updatePurchaseRequest, deletePurchaseRequest, fetchProcurement, hasMenuPermission, currentUser } = useData();
@@ -74,7 +75,11 @@ const PurchaseRequests = () => {
     },
     { header: "Department", accessor: "department" },
     { header: "Status", accessor: "status" },
-    { header: "Date", accessor: "date", render: (item) => item.date || item.createdAt?.split('T')[0] || "2024-05-28" },
+    {
+      header: "Date / Time (EST)",
+      accessor: "date",
+      render: (item) => formatDateTimeEst(item.created_at || item.createdAt || item.date || item.requestDate),
+    },
   ];
 
   return (

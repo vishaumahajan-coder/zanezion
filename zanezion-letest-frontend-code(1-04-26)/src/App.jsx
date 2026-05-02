@@ -88,11 +88,15 @@ const RoleProtectedRoute = ({ role, allowedRoles, children }) => {
   if (!localStorage.getItem('token') || !localStorage.getItem('userRole')) {
     return <Navigate to="/login" replace />;
   }
+  // Full internal access — avoid missing a route in allowedRoles arrays
+  if (role === 'superadmin') {
+    return children;
+  }
   // Company admin: full portal access (sidebar fixed); staff / others use allowedRoles + menuPermissions
   if (role === 'admin') {
     return children;
   }
-  if (allowedRoles.includes(role)) {
+  if (Array.isArray(allowedRoles) && allowedRoles.includes(role)) {
     return children;
   }
   try {

@@ -10,6 +10,7 @@ import { motion } from 'framer-motion';
 import { useData } from '../../context/GlobalDataContext';
 import api from '../../utils/api';
 import { normalizeRole } from '../../utils/authUtils';
+import { shouldDenyStaffLogin } from '../../utils/staffLoginGate';
 
 const Login = ({ onLogin }) => {
   const navigate = useNavigate();
@@ -58,6 +59,12 @@ const Login = ({ onLogin }) => {
           ...user,
           role: normalizedRole
         };
+
+        if (shouldDenyStaffLogin(userData)) {
+          setError('Access denied: your recruitment application was not approved or you were marked as not selected. Contact HR.');
+          setLoading(false);
+          return;
+        }
 
         // Store in localStorage
         localStorage.setItem('token', token);

@@ -26,9 +26,11 @@ const ProcurementDashboard = () => {
   const reqList = purchaseRequests || [];
   const vendorList = vendors || [];
   const quoteList = quotes || [];
+  const approvedVendorList = vendorList.filter((v) => String(v?.status ?? 'active').toLowerCase() === 'active');
+  const pendingVendorApprovals = vendorList.filter((v) => String(v?.status ?? '').toLowerCase() === 'inactive').length;
 
   const pendingRequestsCount = reqList.filter((r) => String(r.status || '').toLowerCase() === 'pending').length;
-  const managedVendorsCount = vendorList.length;
+  const managedVendorsCount = approvedVendorList.length;
   const openQuotesCount = quoteList.filter((q) => String(q.status || '').toLowerCase() === 'pending').length;
   const quotesPipelineUsd = quoteList.reduce((acc, q) => acc + parseFloat(q.total_amount || q.total || 0), 0);
   const formattedPipeline =
@@ -51,7 +53,7 @@ const ProcurementDashboard = () => {
     setIsModalOpen(false);
   };
 
-  const topVendors = vendorList.slice(0, 6);
+  const topVendors = approvedVendorList.slice(0, 6);
 
   return (
     <div className="space-y-8 pb-10">
@@ -143,14 +145,19 @@ const ProcurementDashboard = () => {
         </div>
 
         <div className="glass-card p-6 sm:p-8 flex flex-col min-h-[280px]">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xl font-bold">Vendors</h3>
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
+            <h3 className="text-xl font-bold">Approved vendors</h3>
             <Link to="/dashboard/vendors" className="text-xs text-accent font-bold hover:underline inline-flex items-center gap-1">
               Manage <ChevronRight size={14} />
             </Link>
           </div>
+          {pendingVendorApprovals > 0 && (
+            <p className="text-[10px] font-black uppercase tracking-widest text-warning mb-4">
+              {pendingVendorApprovals} vendor{pendingVendorApprovals === 1 ? '' : 's'} awaiting Super Admin approval (cannot be used on POs yet).
+            </p>
+          )}
           {topVendors.length === 0 ? (
-            <p className="text-secondary text-sm flex-1 flex items-center justify-center py-8">No vendors in directory yet.</p>
+            <p className="text-secondary text-sm flex-1 flex items-center justify-center py-8">No approved vendors yet — add in directory and wait for HQ activation.</p>
           ) : (
             <ul className="space-y-3 flex-1">
               {topVendors.map((v) => (

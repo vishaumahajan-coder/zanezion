@@ -28,6 +28,7 @@ const Invoices = () => {
     }, [clients, customerUsers]);
     const isClient = currentUser?.role?.toLowerCase() === 'client';
     const isSuperAdmin = currentUser?.role?.toLowerCase().replace(/\s/g, '') === 'superadmin';
+    const procurementInvoiceReadOnly = currentUser?.role?.toLowerCase().replace(/\s+/g, '') === 'procurement';
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -66,18 +67,20 @@ const Invoices = () => {
         return matchesClient && matchesSearch;
     });
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
+        if (procurementInvoiceReadOnly && (modalType === 'add' || modalType === 'edit')) return;
         const client = findClientById(formData.clientId);
         if (modalType === 'add') {
-            addInvoice({
+            const res = await addInvoice({
                 ...formData,
                 id: `INV-${Math.floor(5000 + Math.random() * 999)}`,
                 date: new Date().toISOString().split('T')[0],
                 clientName: client?.name || 'Unknown'
             });
+            if (res?.ok === false) return;
         } else {
-            updateInvoice({
+            await updateInvoice({
                 ...selectedInvoice,
                 ...formData,
                 clientName: client?.name || selectedInvoice.clientName
@@ -130,6 +133,7 @@ const Invoices = () => {
 
 
     const handleAction = (type, inv) => {
+        if (procurementInvoiceReadOnly && (type === 'add' || type === 'edit')) return;
         setModalType(type);
         if (type === 'add') {
             setSelectedInvoice(null);
@@ -191,13 +195,16 @@ const Invoices = () => {
                                 </motion.div>
                             )}
                         </AnimatePresence>
-                        {(!isClient || (clients.find(c => c.id === currentUser?.clientId)?.clientType === 'SaaS')) && hasMenuPermission('Invoices', 'can_add') && (
+                        {!procurementInvoiceReadOnly && (!isClient || (clients.find(c => c.id === currentUser?.clientId)?.clientType === 'SaaS')) && hasMenuPermission('Invoices', 'can_add') && (
                             <button
                                 onClick={() => handleAction('add', {})}
                                 className="btn-primary flex items-center gap-2"
                             >
                                 <Plus size={18} /> Create New Invoice
                             </button>
+                        )}
+                        {procurementInvoiceReadOnly && (
+                            <p className="text-[10px] font-black uppercase tracking-widest text-muted">Procurement: view / print / download only — invoice creation is restricted.</p>
                         )}
                     </div>
                 </div>
@@ -247,13 +254,13 @@ const Invoices = () => {
                             </button>
                         )}
                         onView={(inv) => handleAction('view', inv)}
-                        onEdit={isSuperAdmin ? (inv) => handleAction('edit', inv) : null}
-                        onDelete={!isClient ? (inv) => {
+                        onEdit={isSuperAdmin && !procurementInvoiceReadOnly ? (inv) => handleAction('edit', inv) : null}
+                        onDelete={!isClient && !procurementInvoiceReadOnly ? (inv) => {
                             setInvoiceToDelete(inv);
                             setShowDeleteConfirm(true);
                         } : null}
-                        canEdit={hasMenuPermission('Invoices', 'can_edit')}
-                        canDelete={hasMenuPermission('Invoices', 'can_delete')}
+                        canEdit={!procurementInvoiceReadOnly && hasMenuPermission('Invoices', 'can_edit')}
+                        canDelete={!procurementInvoiceReadOnly && hasMenuPermission('Invoices', 'can_delete')}
                     />
                 </div>
 

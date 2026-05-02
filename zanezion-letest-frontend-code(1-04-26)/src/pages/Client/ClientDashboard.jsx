@@ -7,7 +7,7 @@ import {
   Package, Truck, History, CreditCard, Wallet,
   MapPin, CheckCircle,
   ArrowUpRight, ShoppingBag, ShoppingCart, TrendingUp, Landmark,
-  HelpCircle, FileText, Eye, Download, Link, ChevronRight, Zap
+  HelpCircle, FileText, Eye, Download, Link, ChevronRight, Zap, Car, Sparkles
 } from 'lucide-react';
 import Modal from '../../components/Modal';
 import { motion } from 'framer-motion';
@@ -122,6 +122,35 @@ const ClientDashboard = () => {
             </button>
           </div>
         </div>
+
+        {normalizeRole(currentUser?.role) === 'customer' && (
+          <div className="glass-card p-6 border border-accent/15 bg-accent/[0.04]">
+            <p className="text-[10px] font-black text-accent uppercase tracking-[0.3em] mb-4">Your tasks</p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard/chauffeur')}
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-accent hover:text-black hover:border-accent transition-all"
+              >
+                <Car size={16} /> Chauffeur
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard/support')}
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-accent hover:text-black hover:border-accent transition-all"
+              >
+                <HelpCircle size={16} /> Support
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/signup')}
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-accent hover:text-black hover:border-accent transition-all"
+              >
+                <Sparkles size={16} /> Upgrade account
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* KPI Dashboard Grid */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

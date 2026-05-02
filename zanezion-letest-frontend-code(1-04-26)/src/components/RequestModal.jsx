@@ -3,6 +3,7 @@ import Modal from './Modal';
 import { Calendar, User, Package, ClipboardList, Plus, Trash2, Tag, DollarSign, CheckCircle, XCircle } from 'lucide-react';
 import CustomDatePicker from './CustomDatePicker';
 import { useData } from '../context/GlobalDataContext';
+import { formatDateTimeEst } from '../utils/dateEst';
 
 const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'add' }) => {
   const { currentUser } = useData();
@@ -224,6 +225,7 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
               <option>Completed</option>
             </select>
           </div>
+          {formData.requestType !== 'Individual' && (
           <div className="space-y-1 text-white">
             <label className="text-[10px] font-bold text-muted uppercase">Department</label>
             <select
@@ -241,6 +243,7 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
               <option>Events</option>
             </select>
           </div>
+          )}
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-muted uppercase">Connected Entity / Company</label>
             <div className="flex gap-4 mb-2">
@@ -279,6 +282,7 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
           <div className="col-span-1 md:col-span-2 p-3 bg-white/5 rounded-lg border border-border/50 text-center">
             <p className="text-[9px] font-bold text-muted uppercase tracking-widest">Submission Timestamp (Institutional Log)</p>
             <p className="text-xs font-mono text-accent">{formData.todayDate} @ {formData.timestamp}</p>
+            <p className="text-[8px] text-muted mt-2 uppercase tracking-widest">Displayed in Eastern Time (US): {formatDateTimeEst(new Date().toISOString())}</p>
           </div>
         </div>
 

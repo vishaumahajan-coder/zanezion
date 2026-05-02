@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { swalSuccess, swalError, swalWarning, swalInfo, swalConfirm, swalCredentials, swalCopied } from '../../utils/swal';
 import Table from '../../components/Table';
 import KpiCard from '../../components/KpiCard';
@@ -7,6 +7,7 @@ import { useData } from '../../context/GlobalDataContext';
 import { Package, AlertTriangle, ArrowUp, Plus, MapPin, Box, Warehouse, ClipboardCheck, History, DollarSign, Calendar, ClipboardList } from 'lucide-react';
 import CustomDatePicker from '../../components/CustomDatePicker';
 import StatusBadge from '../../components/StatusBadge';
+import { CLIENTS as CLIENTS_SEED } from '../../utils/data';
 
 const Inventory = () => {
   const { inventory, addInventory, updateInventory, deleteInventory, users, currentUser, vendors, stockMovements, addStockEntry, issueStock, projects, purchaseRequests, addPurchaseRequest, updateProject, recordLoss, clients, fetchInventory, fetchClients, fetchVendors, hasMenuPermission, warehouses, fetchWarehouses, fetchPurchaseRequests } = useData();
@@ -37,6 +38,15 @@ const Inventory = () => {
   });
   const userRoleNorm = (currentUser?.role || '').toLowerCase().replace(/[\s_]+/g, '');
   const [activeTab, setActiveTab] = useState(['superadmin', 'admin', 'inventory', 'inventorymanager', 'procurement', 'operations'].includes(userRoleNorm) ? 'Marketplace' : 'Client');
+
+  /** API sometimes returns []; keep seed clients so "Client owner" dropdown always has options in dev. */
+  const clientListForSelect = useMemo(() => {
+    const list = Array.isArray(clients) && clients.length > 0 ? clients : CLIENTS_SEED;
+    return list.map((c) => ({
+      ...c,
+      companyName: c.business_name || c.companyName || c.name,
+    }));
+  }, [clients]);
 
   const isAdmin = ['superadmin', 'admin', 'client', 'inventory', 'inventorymanager', 'procurement', 'operations', 'concierge', 'conciergemanager'].includes(userRoleNorm);
 
@@ -615,8 +625,8 @@ const Inventory = () => {
                     className="w-full bg-background border border-accent/20 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white shadow-lg shadow-accent/5"
                   >
                     <option value="">Select Client...</option>
-                    {clients.map(c => (
-                      <option key={c.id} value={c.id}>{c.companyName || c.name}</option>
+                    {clientListForSelect.map(c => (
+                      <option key={String(c.id)} value={c.id}>{c.companyName || c.business_name || c.name}</option>
                     ))}
                   </select>
                 </div>
@@ -844,8 +854,8 @@ const Inventory = () => {
                       disabled={modalType === 'view'}
                     >
                       <option value="">Select Client...</option>
-                      {clients.map(c => (
-                        <option key={c.id} value={c.id}>{c.companyName || c.name}</option>
+                      {clientListForSelect.map(c => (
+                        <option key={String(c.id)} value={c.id}>{c.companyName || c.business_name || c.name}</option>
                       ))}
                     </select>
                   </div>

@@ -155,6 +155,29 @@ const menuItems = {
   ]
 };
 
+/** Business-account (`client`) sidebar: matches portal + invoices + procurement + inventory + concierge — not full HQ/staff ops menu */
+const businessClientMenu = [
+  { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
+  { icon: ShoppingBag, label: 'Marketplace', path: '/dashboard/store' },
+  { icon: Users, label: 'Customers', path: '/dashboard/clients' },
+  { icon: UserCog, label: 'Staff & Users', path: '/dashboard/users' },
+  { icon: ShoppingCart, label: 'Orders', path: '/dashboard/orders' },
+  { icon: Truck, label: 'Deliveries', path: '/dashboard/deliveries' },
+  { icon: FileText, label: 'Invoices', path: '/dashboard/invoices' },
+  { icon: ClipboardList, label: 'Purchase Requests', path: '/dashboard/purchase-requests' },
+  { icon: Box, label: 'Quotes', path: '/dashboard/quotes' },
+  { icon: FileText, label: 'Purchase Orders', path: '/dashboard/purchase-orders' },
+  { icon: Package, label: 'Inventory', path: '/dashboard/inventory' },
+  { icon: Store, label: 'Warehouses', path: '/dashboard/warehouses' },
+  { icon: Store, label: 'Vendors', path: '/dashboard/vendors' },
+  { icon: Calendar, label: 'Events', path: '/dashboard/events' },
+  { icon: Heart, label: 'Guest Requests', path: '/dashboard/guest-requests' },
+  { icon: Gift, label: 'Luxury Items', path: '/dashboard/luxury-items' },
+  { icon: Car, label: 'Chauffeur', path: '/dashboard/chauffeur' },
+  { icon: Headphones, label: 'Support', path: '/dashboard/support-tickets' },
+  { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
+];
+
 import { useData } from '../context/GlobalDataContext';
 import { normalizeRole } from '../utils/authUtils';
 
@@ -246,10 +269,21 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
       if (userRole === 'client' && !hasDashboard) {
         items = [{ icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' }, ...items];
       }
+      // Business client: if API permissions resolve to nothing useful (only Dashboard / empty), use full default portal menu
+      if (userRole === 'client') {
+        const paths = items.map(i => (i.path || '').split('?')[0]);
+        const onlyDashboard =
+          items.length === 0 ||
+          (items.length === 1 && paths[0] === '/dashboard') ||
+          items.every(i => (i.path || '').split('?')[0] === '/dashboard');
+        if (onlyDashboard) {
+          return businessClientMenu;
+        }
+      }
       return items;
     }
     if (userRole === 'client') {
-      return [{ icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' }];
+      return businessClientMenu;
     }
     // Customer role: filter by plan
     if (userRole === 'customer') {
@@ -276,7 +310,8 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
     || 'ZANEZION';
 
   const sidebarTagline = clientBranding?.tagline
-    || (tenantType === 'saas' ? 'SaaS Platform' : null)
+    || (userRole === 'concierge' ? 'Concierge Services' : null)
+    || (tenantType === 'saas' ? 'Workspace' : null)
     || (tenantType === 'business' ? 'Business Portal' : null)
     || 'Institutional';
 

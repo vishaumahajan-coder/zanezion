@@ -16,8 +16,8 @@ const ACCOUNT_TYPES = [
     subtitle: 'For individuals & general public',
     icon: User,
     color: 'bg-info',
-    description: 'Order premium products, track deliveries, and enjoy luxury concierge services.',
-    features: ['Instant marketplace access', 'Place & track orders', 'Pay at checkout', 'No approval required'],
+    description: 'Order premium products from local grocery stores, track deliveries, and request package pickup/delivery support.',
+    features: ['Marketplace access', 'Track own orders', 'Request chauffeur service', 'No concierge module access'],
     badge: 'Free • No signup fee',
   },
   {
@@ -26,8 +26,15 @@ const ACCOUNT_TYPES = [
     subtitle: 'For registered companies & enterprises',
     icon: Building,
     color: 'bg-accent',
-    description: 'Full business portal with invoices, purchase orders, concierge events and team management.',
-    features: ['Invoice & Purchase Orders', 'Events & Concierge', 'Inventory view (read-only)', 'Admin approval required'],
+    description:
+      'A complete business system: full portal to run your company from one dashboard — invoices to create and manage client bills, purchase orders to order from suppliers, inventory to track stock, sales, and what is left, plus exclusive concierge services (priority help and personal assistance for business users only).',
+    features: [
+      'Full business portal — one dashboard for the whole business',
+      'Invoices — create and manage bills for your clients',
+      'Purchase orders — formal orders and documents for suppliers',
+      'Inventory management — stock, what sold, balances on hand',
+      'Exclusive concierge services — priority support for businesses',
+    ],
     badge: 'Free • Business license required',
   },
   {
@@ -186,7 +193,7 @@ const Signup = () => {
             Join The <span className="text-accent underline decoration-accent/30 lowercase italic">Platinum</span><br />Network Today
           </h2>
           <p className="text-secondary max-w-sm leading-relaxed text-base">
-            Choose your account type and get instant access to luxury concierge, logistics, and procurement services.
+            Choose your account type and get the right access for personal orders or full business operations.
           </p>
           <div className="flex items-center gap-3">
             {ACCOUNT_TYPES.map(t => (
@@ -414,7 +421,7 @@ const Signup = () => {
                   <p className="font-black text-white uppercase tracking-widest text-[10px]">3. SaaS Membership</p>
                   <p>SaaS membership requires payment of the signup fee before review. Fees are non-refundable once the account is activated. If rejected during review, a full refund will be issued within 7 business days.</p>
                   <p className="font-black text-white uppercase tracking-widest text-[10px]">4. Personal Accounts</p>
-                  <p>Personal accounts provide immediate access to the marketplace. All purchases must be paid in full at checkout. No invoice-based billing is available for personal accounts.</p>
+                  <p>Personal accounts provide immediate access to the marketplace. Concierge services are not included on personal accounts. All purchases must be paid in full at checkout, and no invoice-based billing is available.</p>
                   <p className="font-black text-white uppercase tracking-widest text-[10px]">5. Privacy</p>
                   <p>ZaneZion collects and processes personal data in accordance with our Privacy Policy. Data is not sold to third parties and is used only to provide and improve our services.</p>
                   <p className="font-black text-white uppercase tracking-widest text-[10px]">6. Termination</p>

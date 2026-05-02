@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useData } from '../context/GlobalDataContext';
 import { normalizeRole } from '../utils/authUtils';
 import { useNavigate } from 'react-router-dom';
+import StaffClockBar from './StaffClockBar';
 
 const Topbar = ({ toggleSidebar, role }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -180,8 +181,9 @@ const Topbar = ({ toggleSidebar, role }) => {
         </AnimatePresence>
       </div>
 
-      {/* Right: Notifications + Profile */}
+      {/* Right: Clock (operational roles) + Notifications + Profile */}
       <div className="flex items-center gap-1 flex-shrink-0">
+        <StaffClockBar role={role} />
         <div className="relative">
           <button
             onClick={() => { setIsNotifOpen(!isNotifOpen); if (!isNotifOpen) fetchNotifications(); }}

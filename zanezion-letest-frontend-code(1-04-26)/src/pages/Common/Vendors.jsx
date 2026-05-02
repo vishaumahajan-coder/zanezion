@@ -8,6 +8,7 @@ import { normalizeRole } from '../../utils/authUtils';
 
 const Vendors = () => {
   const { vendors, addVendor, updateVendor, deleteVendor, addOrder, fetchVendors, hasMenuPermission, currentUser } = useData();
+  const isSuperAdminUser = normalizeRole(currentUser?.role) === 'superadmin';
 
   React.useEffect(() => {
     fetchVendors();
@@ -32,7 +33,10 @@ const Vendors = () => {
   const handleAction = (type, vendor) => {
     setSelectedVendor(vendor);
     setModalType(type);
-    setFormData(vendor.id ? { ...vendor } : { name: '', rating: 90, delivery: 90, category: 'General', contact: '', address: '', phone: '', email: '' });
+    setFormData(vendor.id ? {
+      ...vendor,
+      contact: vendor.contact ?? vendor.contact_name ?? vendor.contactPerson ?? '',
+    } : { name: '', rating: 90, delivery: 90, category: 'General', contact: '', address: '', phone: '', email: '' });
     setIsModalOpen(true);
   };
 
@@ -120,6 +124,16 @@ const Vendors = () => {
       )
     },
     { header: "Category", accessor: "category", render: (row) => row.category || "Premium Supplier" },
+    {
+      header: "Directory status",
+      accessor: "status",
+      render: (row) => {
+        const st = String(row.status || 'active').toLowerCase();
+        if (st === 'inactive') return <span className="text-[10px] font-black uppercase text-warning">Pending HQ approval</span>;
+        if (st === 'blacklisted') return <span className="text-[10px] font-black uppercase text-danger">Blocked</span>;
+        return <span className="text-[10px] font-black uppercase text-success">Active</span>;
+      }
+    },
   ];
 
   return (
@@ -128,6 +142,9 @@ const Vendors = () => {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Approved Vendors</h1>
           <p className="text-secondary mt-1">Manage precision supply chain partners and procurement channels.</p>
+          {!isSuperAdminUser && (
+            <p className="text-[10px] font-bold text-warning mt-2 uppercase tracking-widest">New vendors you add stay inactive until Super Admin approves them.</p>
+          )}
         </div>
         <div className="flex gap-3">
           <div className="relative w-full md:w-64">
@@ -158,6 +175,25 @@ const Vendors = () => {
           onDelete={(item) => handleAction('delete', item)}
           canEdit={hasMenuPermission('Vendors', 'can_edit')}
           canDelete={hasMenuPermission('Vendors', 'can_delete')}
+          customAction={(row) => (
+            isSuperAdminUser && String(row.status || '').toLowerCase() === 'inactive' ? (
+              <button
+                type="button"
+                className="px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider bg-success/15 text-success border border-success/30 hover:bg-success hover:text-black"
+                title="Activate vendor for procurement"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  try {
+                    await updateVendor({ ...row, status: 'active' });
+                  } catch (err) {
+                    window.alert(err?.message || 'Approve failed');
+                  }
+                }}
+              >
+                Approve
+              </button>
+            ) : null
+          )}
         />
       </div>
 

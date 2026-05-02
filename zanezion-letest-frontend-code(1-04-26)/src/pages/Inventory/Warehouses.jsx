@@ -18,6 +18,12 @@ const Warehouses = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [formData, setFormData] = useState({ name: '', location: '', capacity: 0, manager_id: '', status: 'active' });
 
+  const managerName = (wid) => {
+    if (wid == null || wid === '') return null;
+    const u = users?.find(x => String(x.id) === String(wid));
+    return u?.name || null;
+  };
+
   const filteredWarehouses = warehouses.filter(wh =>
     wh.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     wh.location?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -29,7 +35,7 @@ const Warehouses = () => {
     setModalType(type);
     setFormData(wh.id ? {
       ...wh,
-      manager_id: wh.manager_id || ''
+      manager_id: wh.manager_id != null && wh.manager_id !== '' ? String(wh.manager_id) : ''
     } : { name: '', location: '', capacity: 0, manager_id: '', status: 'active' });
     setIsModalOpen(true);
   };
@@ -54,6 +60,11 @@ const Warehouses = () => {
     { header: "Location", accessor: "location" },
     { header: "Capacity", accessor: "capacity" },
     { header: "Status", accessor: "status" },
+    {
+      header: "Manager",
+      accessor: "manager_id",
+      render: (row) => row.manager_name || managerName(row.manager_id) || '—'
+    },
   ];
 
   return (
@@ -137,14 +148,18 @@ const Warehouses = () => {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-muted uppercase">Manager</label>
-                  <input
-                    type="text"
-                    value={formData.manager}
-                    onChange={(e) => setFormData({ ...formData, manager: e.target.value })}
+                  <label className="text-[10px] font-bold text-muted uppercase">Manager (user)</label>
+                  <select
+                    value={formData.manager_id || ''}
+                    onChange={(e) => setFormData({ ...formData, manager_id: e.target.value })}
                     className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
                     disabled={modalType === 'view'}
-                  />
+                  >
+                    <option value="">Select facility manager…</option>
+                    {(users || []).filter(u => u?.name).map(u => (
+                      <option key={u.id} value={String(u.id)}>{u.name}{u.role ? ` (${u.role})` : ''}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Capacity (%)</label>

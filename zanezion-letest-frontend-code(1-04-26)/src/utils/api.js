@@ -1,8 +1,14 @@
 import axios from 'axios';
 
-// Use environment variable or default to local backend
-// const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://zanzoin-backend-production.up.railway.app/api';
+/**
+ * Single source of truth for API base. Override with VITE_API_URL in .env (e.g. http://localhost:5000/api).
+ * Must match any page that uses raw `fetch` to the same host.
+ */
+export const API_BASE_URL =
+  import.meta.env.VITE_API_URL || 'https://zanzoin-backend-production.up.railway.app/api';
+
+/** Origin only (for static files / image paths) — strips trailing /api */
+export const BACKEND_ORIGIN = String(API_BASE_URL).replace(/\/api\/?$/, '');
 
 const api = axios.create({
   baseURL: API_BASE_URL,

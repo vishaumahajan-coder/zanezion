@@ -5,8 +5,9 @@ import Modal from '../../components/Modal';
 import { Calendar, MapPin, Plus, Star, Search, Clock, Users } from 'lucide-react';
 import { useData } from '../../context/GlobalDataContext';
 import CustomDatePicker from '../../components/CustomDatePicker';
+import { BACKEND_ORIGIN } from '../../utils/api';
 
-const BACKEND_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace('/api', '');
+const BACKEND_URL = BACKEND_ORIGIN;
 const toAbsoluteImageUrl = (rawPath) => {
   if (!rawPath) return null;
   if (String(rawPath).startsWith('http')) return rawPath;

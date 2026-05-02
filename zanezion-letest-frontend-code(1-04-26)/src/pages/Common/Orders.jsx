@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import Table from '../../components/Table';
 import { useData } from '../../context/GlobalDataContext';
+import { isoDateSlice, displayOrderStatus } from '../../utils/orderWorkflow';
 import { Search, Plus, PackageCheck, PackageX, FileText, CheckCircle, ShoppingCart, Truck, Warehouse, ArrowRightCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import OrderModal from '../../components/OrderModal';
 import InvoiceGenerationModal from '../../components/InvoiceGenerationModal';
+import { normalizeRole, roleCanCreateInstitutionalOrder } from '../../utils/authUtils';
 
 const Orders = () => {
   const {
@@ -26,6 +28,8 @@ const Orders = () => {
   }, [fetchOrders, fetchVendors, fetchClients]);
 
   const normalizedRole = currentUser?.role?.toLowerCase().replace(/\s/g, '');
+  const portalRole = normalizeRole(currentUser?.role);
+  const canStaffCreateOrder = roleCanCreateInstitutionalOrder(portalRole);
   const canManageOrders = ['superadmin', 'admin', 'operations', 'client', 'procurement', 'inventory', 'logistics'].includes(normalizedRole);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -123,7 +127,13 @@ const Orders = () => {
         return `$${parseFloat(total).toLocaleString()}`;
       }
     },
-    { header: "Status", accessor: "status" },
+    {
+      header: "Status",
+      accessor: "status",
+      render: (row) => (
+        <span className="text-xs font-semibold capitalize">{displayOrderStatus(row.status)}</span>
+      )
+    },
     {
       header: "Delivery",
       accessor: "id",
@@ -146,7 +156,7 @@ const Orders = () => {
         );
       }
     },
-    { header: "Date", accessor: "date", render: (item) => item.date || item.orderDate || new Date().toISOString().split('T')[0] },
+    { header: "Date", accessor: "date", render: (item) => item.date || item.requestDate || item.order_date || isoDateSlice(item.created_at || item.createdAt) || '-' },
   ];
 
   return (
@@ -156,12 +166,17 @@ const Orders = () => {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Order Management</h1>
           <p className="text-secondary mt-1">Track and manage multi-line supply chain requests and deliveries.</p>
+          {!canStaffCreateOrder && (
+            <p className="text-[10px] font-bold text-muted mt-2 uppercase tracking-wide">
+              Manual order creation is limited to staff only — customers use Marketplace / staff-assisted fulfilment.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <button className="btn-secondary flex items-center gap-2" onClick={() => navigate('/dashboard/invoices')}>
             <FileText size={16} /> Ledger / Invoices
           </button>
-          {hasMenuPermission('Orders', 'can_add') && (
+          {canStaffCreateOrder && hasMenuPermission('Orders', 'can_add') && (
             <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
               <Plus size={16} /> Create Order
             </button>
@@ -202,7 +217,30 @@ const Orders = () => {
             canEdit={hasMenuPermission('Orders', 'can_edit')}
             canDelete={hasMenuPermission('Orders', 'can_delete')}
             customAction={(item) => canManageOrders ? (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 flex-wrap">
+                {['superadmin', 'operations', 'admin'].includes(normalizedRole) && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const oid = item.id;
+                      const orderRef = oid != null ? `ORD-${String(oid).padStart(3, '0')}` : '';
+                      navigate('/dashboard/deliveries', {
+                        state: {
+                          prefillOrderId: oid,
+                          orderId: orderRef,
+                          items: item.items,
+                          client: item.client,
+                          location: item.location || item.pickupLocation
+                        }
+                      });
+                    }}
+                    className="p-2 rounded-lg text-secondary hover:text-accent hover:bg-accent/10 transition-all flex items-center justify-center font-bold text-[10px] gap-1 border border-white/5"
+                    title="Delivery action — assign marketplace fulfilment for field staff"
+                  >
+                    <Truck size={14} /> Delivery
+                  </button>
+                )}
                 {/* Admin Approval: created -> operation */}
                 {['superadmin', 'client', 'admin'].includes(normalizedRole) && 
                  ['created', 'admin_review', 'pending_review'].includes(String(item.status).toLowerCase()) && (
@@ -291,6 +329,7 @@ const Orders = () => {
         selectedOrder={selectedOrder}
         onSave={handleSave}
         onDelete={handleDelete}
+        role={currentUser?.role}
       />
       <InvoiceGenerationModal
         isOpen={isInvoiceModalOpen}

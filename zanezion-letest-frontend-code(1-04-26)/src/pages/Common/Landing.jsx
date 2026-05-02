@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import { LIFESTYLE_SERVICES } from '../../utils/data';
 import { useData } from '../../context/GlobalDataContext';
 import Modal from '../../components/Modal';
+import { BACKEND_ORIGIN } from '../../utils/api';
 
 const Landing = () => {
     const { accessPlans, fetchAccessPlans, dispatchSubscriptionRequest } = useData();
@@ -36,8 +37,7 @@ const Landing = () => {
             try {
                 // If API URL is not set in env, it maps to backend running locally. Using relative /api path 
                 // typically won't work perfectly on landing unless proxy points it, better full fallback.
-                const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-                const res = await fetch(`${apiUrl}/api/staff/public/admins`);
+                const res = await fetch(`${BACKEND_ORIGIN}/api/staff/public/admins`);
                 const data = await res.json();
                 if (data.success) {
                     setAdmins(data.data);

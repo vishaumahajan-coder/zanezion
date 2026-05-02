@@ -62,7 +62,8 @@ const Quotes = () => {
     items: [{ name: '', qty: 1, price: 0 }],
     leadTime: '',
     validity: '',
-    status: 'Pending'
+    status: 'Pending',
+    quoteType: 'client',
   });
 
   // Procurement dashboard "New quote" → /dashboard/quotes?new=1
@@ -96,13 +97,15 @@ const Quotes = () => {
       items: normalizeQuoteItems(quote.items),
       validity: quote.validity ?? (quote.validity_date?.split?.('T')?.[0] || ''),
       leadTime: quote.leadTime ?? quote.lead_time ?? '',
+      quoteType: quote.quote_type === 'vendor_request' || quote.quoteType === 'vendor' ? 'vendor' : 'client',
     } : {
       vendor: '',
       vendorId: 1,
       items: [{ name: '', qty: 1, price: 0 }],
       leadTime: '3 Days',
       validity: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      status: 'Pending'
+      status: 'Pending',
+      quoteType: 'client',
     });
     setIsModalOpen(true);
   };
@@ -118,9 +121,22 @@ const Quotes = () => {
   };
 
   const handleSave = () => {
-    const items = normalizeQuoteItems(formData.items);
+    const items = normalizeQuoteItems(formData.items).map((row) =>
+      formData.quoteType === 'vendor'
+        ? { ...row, price: 0 }
+        : row
+    );
     const total = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (parseInt(i.qty, 10) || 0), 0);
-    const finalData = { ...formData, items, total, date: new Date().toISOString().split('T')[0] };
+    const qt = formData.quoteType === 'vendor' ? 'vendor_request' : 'client';
+    const finalData = {
+      ...formData,
+      items,
+      total,
+      total_amount: total,
+      date: new Date().toISOString().split('T')[0],
+      quote_type: qt,
+      quoteType: formData.quoteType,
+    };
     if (modalType === 'add') {
       addQuote(finalData);
     } else if (modalType === 'edit') {
@@ -231,13 +247,15 @@ const Quotes = () => {
           data={currentQuotes}
           actions={true}
           customAction={(quote) => (
+            <div className="flex items-center gap-1">
             <button
               onClick={(e) => { e.stopPropagation(); handlePrint(quote); }}
               className="p-2 rounded-lg text-secondary hover:text-white hover:bg-white/10 transition-all flex items-center justify-center"
-              title="Print Quote"
+              title="Print / download quote"
             >
               <Printer size={16} />
             </button>
+            </div>
           )}
           onView={(item) => handleAction('view', item)}
           onEdit={(item) => handleAction('edit', item)}
@@ -281,6 +299,18 @@ const Quotes = () => {
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Protocol ID</label>
                   <input type="text" value={formData.id || 'AUTO'} className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-mono text-accent" disabled={true} />
+                </div>
+                <div className="space-y-1 col-span-2">
+                  <label className="text-[10px] font-bold text-muted uppercase">Quote purpose</label>
+                  <select
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
+                    value={formData.quoteType || 'client'}
+                    onChange={(e) => setFormData({ ...formData, quoteType: e.target.value })}
+                    disabled={modalType === 'view'}
+                  >
+                    <option value="client">Client quote (with unit pricing)</option>
+                    <option value="vendor">Vendor quote request (no unit price required)</option>
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Protocol Status</label>

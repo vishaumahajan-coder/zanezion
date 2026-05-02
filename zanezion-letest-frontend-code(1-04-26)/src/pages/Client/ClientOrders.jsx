@@ -6,10 +6,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import OrderModal from '../../components/OrderModal';
 import StatusBadge from '../../components/StatusBadge';
+import { displayOrderStatus, isoDateSlice } from '../../utils/orderWorkflow';
+import { normalizeRole, roleCanCreateInstitutionalOrder } from '../../utils/authUtils';
 
 const ClientOrders = () => {
     const { orders, currentUser, clients, confirmDeliveryReceipt, addOrder, fetchOrders, fetchClients } = useData();
     const userRole = localStorage.getItem('userRole') || 'client';
+    const portalRole = normalizeRole(currentUser?.role || userRole);
+    const canStaffCreateOrderHere = roleCanCreateInstitutionalOrder(portalRole);
 
     React.useEffect(() => {
         fetchOrders();
@@ -47,9 +51,10 @@ const ClientOrders = () => {
         const matchesSearch = String(order.id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
             orderItems.some(i => (i.name || '').toLowerCase().includes(searchTerm.toLowerCase()));
 
+        const st = String(order.status || '').toLowerCase();
         const matchesStatus = statusFilter === 'All' ? true :
-            statusFilter === 'Active' ? order.status !== 'Delivered' :
-                statusFilter === 'Closed' ? order.status === 'Delivered' : true;
+            statusFilter === 'Active' ? !['completed', 'cancelled'].includes(st) :
+                statusFilter === 'Closed' ? st === 'completed' : true;
         return isMyOrder && matchesSearch && matchesStatus;
     });
 
@@ -87,28 +92,39 @@ const ClientOrders = () => {
         {
             header: "Request Date",
             accessor: "requestDate",
-            render: (order) => <span className="text-secondary font-black italic">{order.requestDate || order.createdAt?.split('T')[0] || '2024-06-01'}</span>
+            render: (order) => {
+                const d = isoDateSlice(order.order_date || order.created_at || order.requestDate || order.date || order.createdAt);
+                return <span className="text-secondary font-black italic">{d || '—'}</span>;
+            }
         },
         {
             header: "Due Date",
             accessor: "dueDate",
-            render: (order) => <span className="text-white font-black italic">{order.dueDate || order.date || '2024-06-01'}</span>
+            render: (order) => {
+                const d = isoDateSlice(order.due_date || order.dueDate);
+                return <span className="text-white font-black italic">{d || '—'}</span>;
+            }
         },
         {
             header: "Status",
             accessor: "status",
-            render: (row) => (
-                <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${row.status === 'Delivered' ? 'bg-success/20 text-success border border-success/30' :
-                    row.status === 'Pending' ? 'bg-warning/20 text-warning border border-warning/30' :
-                        'bg-accent/20 text-accent border border-accent/30'
-                    }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${row.status === 'Delivered' ? 'bg-success' :
-                        row.status === 'Pending' ? 'bg-warning animate-pulse' :
-                            'bg-accent animate-pulse'
-                        }`}></span>
-                    {row.status}
-                </div>
-            )
+            render: (row) => {
+                const st = String(row.status || '').toLowerCase();
+                const palette = st === 'completed' ? 'bg-success/20 text-success border-success/30' :
+                    st === 'cancelled' ? 'bg-danger/20 text-danger border-danger/30' :
+                        st === 'admin_review' || st === 'created' ? 'bg-warning/20 text-warning border-warning/30' :
+                            'bg-accent/20 text-accent border-accent/30';
+                const dot = st === 'completed' ? 'bg-success' :
+                    st === 'cancelled' ? 'bg-danger' :
+                        st === 'admin_review' || st === 'created' ? 'bg-warning animate-pulse' :
+                            'bg-accent animate-pulse';
+                return (
+                    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${palette}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${dot}`}></span>
+                        {displayOrderStatus(row.status)}
+                    </div>
+                );
+            }
         },
     ];
 
@@ -118,14 +134,19 @@ const ClientOrders = () => {
         setIsModalOpen(true);
     };
 
-    const handleSaveOrder = (orderData) => {
-        addOrder({
+    const handleSaveOrder = async (orderData) => {
+        if (!roleCanCreateInstitutionalOrder(portalRole)) {
+            window.alert('Only authorised staff can create orders on behalf of clients. Use Marketplace to shop, or contact your representative.');
+            setIsModalOpen(false);
+            return;
+        }
+        await addOrder({
             ...orderData,
             clientId: myClient?.id || currentUser?.id,
             client: myClient?.name || currentUser?.name,
             email: myClient?.email || currentUser?.email,
-            status: 'Pending',
-            createdAt: new Date().toISOString()
+            order_date: isoDateSlice(orderData.requestDate),
+            due_date: isoDateSlice(orderData.dueDate),
         });
         setIsModalOpen(false);
     };
@@ -137,7 +158,12 @@ const ClientOrders = () => {
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl md:text-3xl font-black tracking-tighter text-white italic uppercase">My Orders</h1>
-                    <p className="text-secondary text-[10px] md:text-xs mt-1 font-black uppercase tracking-[0.2em] opacity-70">Institutional procurement history and luxury asset deployment logs.</p>
+                    <p className="text-secondary text-[10px] md:text-xs mt-1 font-black uppercase tracking-[0.2em] opacity-70">Order history & activity — view and track only. Place new orders from Marketplace (store selection happens at checkout).</p>
+                    {!canStaffCreateOrderHere && (
+                        <p className="text-[10px] font-bold text-muted mt-2 uppercase tracking-wide max-w-xl">
+                            Need a bespoke order? Use <span className="text-accent">Marketplace</span> or ask staff to create one on your behalf — manual Create Order is staff-only.
+                        </p>
+                    )}
                 </div>
                 <div className="flex flex-col sm:flex-row gap-3">
                     <div className="relative">
@@ -150,12 +176,15 @@ const ClientOrders = () => {
                         />
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted/40" size={14} />
                     </div>
+                    {canStaffCreateOrderHere && (
                     <button
+                        type="button"
                         onClick={() => { setSelectedOrder(null); setModalType('add'); setIsModalOpen(true); }}
                         className="btn-primary text-[10px] px-6 flex items-center gap-2"
                     >
                         <Plus size={14} /> Create Order
                     </button>
+                    )}
                 </div>
             </div>
 
@@ -186,7 +215,7 @@ const ClientOrders = () => {
                 <div className="glass-card p-6">
                     <p className="text-[10px] text-secondary font-black uppercase tracking-widest mb-1">Active Deployments</p>
                     <p className="text-2xl font-black text-white italic font-heading tracking-tighter">
-                        {clientOrders.filter(o => o.status === 'Pending' || o.status === 'Processing' || o.status === 'In Transit').length.toString().padStart(2, '0')}
+                        {clientOrders.filter(o => !['completed', 'cancelled'].includes(String(o.status || '').toLowerCase())).length.toString().padStart(2, '0')}
                     </p>
                 </div>
 
@@ -211,7 +240,7 @@ const ClientOrders = () => {
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <p className="text-[9px] text-muted font-black uppercase tracking-widest mb-0.5">Deployment Date</p>
-                                <p className="text-xs font-black text-secondary italic tracking-tighter">{order.date || order.createdAt?.split('T')[0] || '2024-06-01'}</p>
+                                <p className="text-xs font-black text-secondary italic tracking-tighter">{isoDateSlice(order.order_date || order.date || order.requestDate || order.created_at || order.createdAt) || '—'}</p>
                             </div>
                             <div>
                                 <p className="text-[9px] text-muted font-black uppercase tracking-widest mb-0.5">Fiscal Value</p>
@@ -276,7 +305,7 @@ const ClientOrders = () => {
                 selectedOrder={selectedOrder}
                 onSave={handleSaveOrder}
                 onDelete={null}
-                role={userRole}
+                role={currentUser?.role || userRole}
             />
         </div>
     );

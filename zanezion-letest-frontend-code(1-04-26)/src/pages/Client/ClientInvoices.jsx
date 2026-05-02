@@ -608,14 +608,16 @@ const ClientInvoices = () => {
                     <div className="flex gap-3 justify-end pt-4">
                         <button onClick={() => setIsInvoiceModalOpen(false)} className="btn-secondary">Cancel</button>
                         <button
-                            onClick={() => {
-                                addInvoice({
+                            type="button"
+                            onClick={async () => {
+                                const res = await addInvoice({
                                     id: `INV-${Date.now()}`,
                                     ...invoiceFormData,
+                                    dueDate: invoiceFormData.date,
                                     paidAmount: 0,
                                     createdAt: new Date().toISOString()
                                 });
-                                setIsInvoiceModalOpen(false);
+                                if (res?.ok) setIsInvoiceModalOpen(false);
                             }}
                             className="btn-primary px-8"
                         >

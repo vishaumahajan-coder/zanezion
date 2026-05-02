@@ -5,8 +5,9 @@ import Modal from '../../components/Modal';
 import { useLocation } from 'react-router-dom';
 import {
   Plus, Search, Truck, MapPin, Camera,
-  Clock, Phone, Navigation, PackageCheck, PenTool, Image as ImageIcon, Ship, Plane, AlertCircle, RefreshCcw, CheckCircle2, Activity, Trash2
+  Clock, Phone, Navigation, PackageCheck, PenTool, Image as ImageIcon, Ship, Plane, AlertCircle, RefreshCcw, CheckCircle2, Activity, Trash2, Car
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import Pagination from '../../components/Common/Pagination';
 
 import { useData } from '../../context/GlobalDataContext';
@@ -78,8 +79,11 @@ const Deliveries = () => {
 
   // Catch Order State for Auto-Mission Launch
   useEffect(() => {
-    if (locationState.state?.orderId) {
-      const { orderId, items, client, location, mode } = locationState.state;
+    const st = locationState.state;
+    if (!st) return;
+
+    if (st.orderId && !st.prefillOrderId) {
+      const { orderId, items, client, location, mode } = st;
       handleAction('add', {
         orderId,
         items,
@@ -87,7 +91,21 @@ const Deliveries = () => {
         mode: mode || 'Road',
         passengerInfo: { name: client || '', count: 1, phone: '' }
       });
-      // Clear state so it doesn't re-open on refresh
+      window.history.replaceState({}, document.title);
+      return;
+    }
+
+    if (st.prefillOrderId != null) {
+      const oid = st.prefillOrderId;
+      const orderRef = st.orderId || `ORD-${String(oid).padStart(3, '0')}`;
+      handleAction('add', {
+        orderId: orderRef,
+        items: Array.isArray(st.items) ? st.items : [],
+        pickupLocation: st.location || 'TBD - Warehouse',
+        mode: st.mode || 'Road',
+        missionType: 'Logistics',
+        passengerInfo: { name: st.client || '', count: 1, phone: '' }
+      });
       window.history.replaceState({}, document.title);
     }
   }, [locationState]);
@@ -223,6 +241,17 @@ const Deliveries = () => {
             <Plus size={16} /> Deploy New Mission
           </button>
         )}
+      </div>
+
+      <div className="glass-card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-accent/25 bg-white/[0.02]">
+        <p className="text-xs text-secondary max-w-xl">
+          <span className="font-black text-white uppercase tracking-widest text-[10px] block mb-1">Routing</span>
+          Marketplace &amp; parcel fulfilment stays on this board for field staff assignment.{' '}
+          <strong className="text-accent">Chauffeur / VIP</strong> missions belong in the Chauffeur protocol.
+        </p>
+        <Link to="/dashboard/chauffeur" className="btn-secondary inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest shrink-0 py-2.5 px-4">
+          <Car size={16} className="text-accent" /> Chauffeur protocol
+        </Link>
       </div>
 
       <div className="glass-card p-6">

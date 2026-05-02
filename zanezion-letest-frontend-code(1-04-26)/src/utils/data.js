@@ -190,7 +190,20 @@ export const VENDORS = [
   { id: 2, name: 'Nassau Wine & Spirits', contact_name: 'Sarah Lee', email: 'sarah@nws.com', phone: '123-456-7896' },
 ];
 
+/** Standard catalogue taxonomy — filter marketplace / reporting */
+export const MARKETPLACE_CATEGORIES = [
+  'Grocery',
+  'Food',
+  'Beverage',
+  'Automotive',
+  'Maritime',
+  'Pharmaceutical',
+  'Building Supplies',
+  'Home',
+  'General',
+];
+
 export const INVENTORY = [
-  { id: 1, name: 'Dom Perignon Champagne', quantity: 6, price: 200, vendor_name: 'Nassau Wine & Spirits', warehouse_name: 'Main Warehouse' },
-  { id: 2, name: 'Fresh Atlantic Lobster', quantity: 15, price: 50, vendor_name: 'Caribbean Fine Provisions', warehouse_name: 'Cold Storage' },
+  { id: 1, name: 'Dom Perignon Champagne', category: 'Beverage', quantity: 6, price: 200, vendor_id: 2, vendor_name: 'Nassau Wine & Spirits', warehouse_name: 'Main Warehouse' },
+  { id: 2, name: 'Fresh Atlantic Lobster', category: 'Food', quantity: 15, price: 50, vendor_id: 1, vendor_name: 'Caribbean Fine Provisions', warehouse_name: 'Cold Storage' },
 ];

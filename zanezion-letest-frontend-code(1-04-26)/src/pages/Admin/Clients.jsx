@@ -827,7 +827,7 @@ const Clients = () => {
                                       Update Status <ChevronDown size={12} />
                                     </button>
                                     <div className="absolute right-0 bottom-full mb-1 w-48 bg-sidebar border border-border rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                                      {['created', 'admin_review', 'processing', 'completed', 'cancelled'].map(s => (
+                                      {['created', 'admin_review', 'operation', 'procurement', 'inventory', 'logistics', 'completed', 'cancelled'].map(s => (
                                         <button key={s} onClick={() => updateOrderStatus(order.id, s)}
                                           className={`w-full text-left px-4 py-2.5 text-[10px] font-black uppercase tracking-widest hover:bg-white/5 transition-all first:rounded-t-xl last:rounded-b-xl ${
                                             order.status === s ? 'text-accent bg-accent/5' : 'text-secondary'

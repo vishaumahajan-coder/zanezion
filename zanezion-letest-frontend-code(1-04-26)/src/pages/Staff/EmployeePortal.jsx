@@ -24,7 +24,6 @@ const EmployeePortal = () => {
         leaveRequests, addLeaveRequest,
         getVacationBalance, toggleAvailability,
         deliveries, updateDelivery, fetchDeliveries,
-        clockIn, clockOut
     } = useData();
 
     const location = useLocation();
@@ -81,50 +80,10 @@ const EmployeePortal = () => {
     );
 
     const totalYTD = myPayHistory.reduce((acc, p) => acc + parseFloat((p.total || "0").replace('$', '').replace(',', '') || 0), 0);
-    
-    const [shiftStatus, setShiftStatus] = useState(() => localStorage.getItem('shiftStatus') || 'Off Duty');
-    const [shiftStartTime, setShiftStartTime] = useState(() => {
-        const savedTime = localStorage.getItem('shiftStartTime');
-        return savedTime ? new Date(savedTime) : null;
-    });
-    const [currentTime, setCurrentTime] = useState(new Date());
 
-    useEffect(() => {
-        let timer;
-        if (shiftStatus === 'On Duty') {
-            timer = setInterval(() => setCurrentTime(new Date()), 1000);
-        }
-        return () => clearInterval(timer);
-    }, [shiftStatus]);
-
-    useEffect(() => {
-        localStorage.setItem('shiftStatus', shiftStatus);
-        if (shiftStartTime) {
-            localStorage.setItem('shiftStartTime', shiftStartTime.toISOString());
-        } else {
-            localStorage.removeItem('shiftStartTime');
-        }
-    }, [shiftStatus, shiftStartTime]);
-
-    const handleClockIn = async () => {
-        const now = new Date();
-        const shiftId = await clockIn(currentUser?.location || 'Central Hub');
-        if (shiftId) {
-            setShiftStatus('On Duty');
-            setShiftStartTime(now);
-            setCurrentTime(now);
-            addLog({ action: 'Clock In', detail: `${currentUser?.name || 'User'} started shift at ${now.toLocaleTimeString()}`, type: 'system' });
-        }
-    };
-
-    const handleClockOut = async () => {
-        const result = await clockOut();
-        if (result) {
-            setShiftStatus('Off Duty');
-            setShiftStartTime(null);
-            addLog({ action: 'Clock Out', detail: `${currentUser?.name || 'User'} ended shift.`, type: 'system' });
-        }
-    };
+    const activeDeliveriesCount = myDeliveries.filter(d =>
+        !['delivered', 'completed', 'cancelled'].includes(String(d.status || '').toLowerCase().replace(/\s+/g, '_'))
+    ).length;
 
     const handleStatusChange = (asg, newStatus, proofData = null) => {
         const updatedAsg = { ...asg, status: newStatus, ...proofData };
@@ -168,24 +127,17 @@ const EmployeePortal = () => {
             color: "text-success" 
         },
         {
-            label: "Shift Duration",
-            value: (() => {
-                if (!shiftStartTime) return '0h 0m 0s';
-                const diff = Math.max(0, currentTime - shiftStartTime);
-                const h = Math.floor(diff / 3600000);
-                const m = Math.floor((diff % 3600000) / 60000);
-                const s = Math.floor((diff % 60000) / 1000);
-                return `${h}h ${m}m ${s}s`;
-            })(),
-            subValue: shiftStartTime ? `Started at ${shiftStartTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Shift Inactive',
-            icon: Clock,
+            label: "Active Deliveries",
+            value: String(activeDeliveriesCount).padStart(2, '0'),
+            subValue: 'Assigned routes in progress',
+            icon: Truck,
             color: "text-warning"
         },
     ];
 
     return (
         <div className="space-y-8 pb-12">
-            {/* Header & Clock In - Premium Responsive Pass */}
+            {/* Header — check-in/out lives in top navbar (StaffClockBar) for all eligible roles */}
             <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
                 <div className="flex-shrink-0">
                     <h1 className="text-3xl md:text-4xl font-black tracking-tighter text-white italic uppercase flex items-center gap-3">
@@ -211,33 +163,8 @@ const EmployeePortal = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3 bg-white/[0.03] p-2.5 rounded-2xl border border-white/10 backdrop-blur-xl">
-                        <div className="flex bg-black/40 p-1 rounded-xl border border-white/5">
-                            <button
-                                onClick={handleClockIn}
-                                disabled={shiftStatus === 'On Duty'}
-                                className={`px-5 md:px-7 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${shiftStatus === 'On Duty' ? 'bg-success/15 text-success/50 cursor-not-allowed' : 'bg-white/5 text-secondary hover:bg-success hover:text-black hover:scale-[1.02]'}`}
-                            >
-                                Clock In
-                            </button>
-                            <button
-                                onClick={handleClockOut}
-                                disabled={shiftStatus === 'Off Duty'}
-                                className={`px-5 md:px-7 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${shiftStatus === 'Off Duty' ? 'bg-danger/15 text-danger/50 cursor-not-allowed' : 'bg-white/5 text-secondary hover:bg-danger hover:text-white hover:scale-[1.02]'}`}
-                            >
-                                Clock Out
-                            </button>
-                        </div>
-
-                        <div className="px-5 py-2 border-x border-white/10 hidden md:block">
-                            <p className="text-[9px] font-black text-muted uppercase tracking-widest mb-1.5 opacity-60 text-center">Protocol Status</p>
-                            <div className="flex items-center justify-center gap-2.5">
-                                <div className={`w-2.5 h-2.5 rounded-full animate-pulse shrink-0 ${shiftStatus === 'On Duty' ? 'bg-success shadow-[0_0_12px_rgba(34,197,94,0.6)]' : 'bg-danger shadow-[0_0_12px_rgba(239,68,68,0.4)]'}`} />
-                                <p className={`text-xs font-black uppercase tracking-widest italic ${shiftStatus === 'On Duty' ? 'text-success' : 'text-danger'}`}>{shiftStatus}</p>
-                            </div>
-                        </div>
-
-                        <div className="px-5 py-2 flex flex-col items-center">
-                            <p className="text-[9px] font-black text-muted uppercase tracking-widest mb-1.5 opacity-60">Balance</p>
+                        <div className="px-5 py-2 flex flex-col items-center min-w-[120px]">
+                            <p className="text-[9px] font-black text-muted uppercase tracking-widest mb-1.5 opacity-60">Leave balance</p>
                             <p className="text-lg font-black text-accent italic tracking-tighter tabular-nums flex items-center gap-2">
                                 <Calendar size={14} className="opacity-50" /> {currentUser?.vacationBalance || 0}<span className="text-[10px] uppercase tracking-tighter opacity-50 not-italic ml-0.5">h</span>
                             </p>
@@ -366,27 +293,57 @@ const EmployeePortal = () => {
                                             <p className="text-[10px] font-black text-muted uppercase tracking-widest mb-1">Destination</p>
                                             <p className="text-sm font-black text-white italic tracking-tighter">{del.location || 'Client Hub'}</p>
                                         </div>
-                                        <div className="flex gap-2">
+                                        <div className="flex flex-wrap gap-2 justify-end">
                                             <StatusBadge status={del.status} />
                                             {(() => {
-                                                const s = String(del.status).toLowerCase().replace(/_/g, ' ');
-                                                if (['accepted', 'pending'].includes(s)) {
+                                                const s = String(del.status || '').toLowerCase().replace(/\s+/g, '_');
+                                                const mine = String(del.driverId) === String(currentUser?.id) || del.driver === currentUser?.name;
+                                                const open = ['pending', 'pending_pickup', 'pending_review', ''].includes(s);
+
+                                                if (open) {
+                                                    return (
+                                                        <>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => updateDelivery({
+                                                                    ...del,
+                                                                    status: 'assigned',
+                                                                    driverId: currentUser?.id,
+                                                                    driver: currentUser?.name
+                                                                })}
+                                                                className="btn-primary py-2 px-4 text-[10px]"
+                                                            >
+                                                                Accept
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => updateDelivery({ ...del, status: 'cancelled' })}
+                                                                className="py-2 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest border border-danger/40 text-danger hover:bg-danger/10"
+                                                            >
+                                                                Decline
+                                                            </button>
+                                                        </>
+                                                    );
+                                                }
+                                                if (s === 'assigned' && mine) {
                                                     return (
                                                         <button
-                                                            onClick={() => updateDelivery({ ...del, status: 'in_transit' })}
+                                                            type="button"
+                                                            onClick={() => updateDelivery({ ...del, status: 'en_route' })}
                                                             className="btn-primary py-2 px-4 text-[10px]"
                                                         >
-                                                            Start Trip
+                                                            Start trip
                                                         </button>
                                                     );
                                                 }
-                                                if (['in transit', 'en route'].includes(s)) {
+                                                if ((s === 'en_route' || s === 'in_transit') && mine) {
                                                     return (
                                                         <button
-                                                            onClick={() => updateDelivery({ ...del, status: 'delivered' })}
+                                                            type="button"
+                                                            onClick={() => updateDelivery({ ...del, status: 'Delivered' })}
                                                             className="bg-success text-white py-2 px-4 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all"
                                                         >
-                                                            Mark as Delivered
+                                                            Mark delivered
                                                         </button>
                                                     );
                                                 }
