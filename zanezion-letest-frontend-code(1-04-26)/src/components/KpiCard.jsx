@@ -38,7 +38,7 @@ const KpiCard = ({ label, value, change, type, icon: Icon, color, compact }) => 
       </div>
 
       <div>
-        <p className="text-secondary text-[10px] uppercase font-black tracking-widest mb-1.5 truncate opacity-70">{label}</p>
+        <p className="text-secondary text-[9px] sm:text-[10px] uppercase font-black tracking-wider mb-1.5 truncate opacity-70">{label}</p>
         <div className="flex items-baseline gap-2 flex-wrap">
           <h3 className={`text-2xl sm:text-3xl font-black font-heading italic tracking-tighter ${getValueColor()}`}>{value}</h3>
         </div>

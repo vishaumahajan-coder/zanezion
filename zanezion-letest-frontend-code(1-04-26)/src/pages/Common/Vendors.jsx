@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import Table from '../../components/Table';
 import Modal from '../../components/Modal';
 import OrderModal from '../../components/OrderModal';
 import { useData } from '../../context/GlobalDataContext';
-import { Store, Star, Phone, Mail, Plus, ShieldCheck } from 'lucide-react';
+import { Store, Search, Star, Phone, Mail, Plus, ShieldCheck, CheckCircle } from 'lucide-react';
+import { swalSuccess } from '../../utils/swal';
 import { normalizeRole } from '../../utils/authUtils';
 
 const Vendors = () => {
@@ -30,11 +31,31 @@ const Vendors = () => {
     String(v.id).toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const pendingApprovalCount = useMemo(
+    () => (isSuperAdminUser ? vendors.filter(v => String(v.status || '').toLowerCase() === 'inactive').length : 0),
+    [isSuperAdminUser, vendors]
+  );
+
+  const tableVendors = useMemo(() => {
+    if (!isSuperAdminUser) return filteredVendors;
+    return [...filteredVendors].sort((a, b) => {
+      const pa = String(a.status || '').toLowerCase() === 'inactive' ? 0 : 1;
+      const pb = String(b.status || '').toLowerCase() === 'inactive' ? 0 : 1;
+      return pa - pb;
+    });
+  }, [filteredVendors, isSuperAdminUser]);
+
+  const spotlightVendor = useMemo(
+    () => vendors.find(v => String(v.status || '').toLowerCase() === 'active') || null,
+    [vendors]
+  );
+
   const handleAction = (type, vendor) => {
     setSelectedVendor(vendor);
     setModalType(type);
     setFormData(vendor.id ? {
       ...vendor,
+      name: vendor.name ?? vendor.vendor_name ?? vendor.business_name ?? vendor.company_name ?? '',
       contact: vendor.contact ?? vendor.contact_name ?? vendor.contactPerson ?? '',
     } : { name: '', rating: 90, delivery: 90, category: 'General', contact: '', address: '', phone: '', email: '' });
     setIsModalOpen(true);
@@ -76,6 +97,7 @@ const Vendors = () => {
     try {
       await deleteVendor(selectedVendor.id);
       setIsModalOpen(false);
+      swalSuccess('Deleted', 'Vendor has been removed successfully.');
     } catch (e) {
       window.alert(vendorSaveErrorMessage(e));
     }
@@ -128,10 +150,10 @@ const Vendors = () => {
       header: "Directory status",
       accessor: "status",
       render: (row) => {
-        const st = String(row.status || 'active').toLowerCase();
-        if (st === 'inactive') return <span className="text-[10px] font-black uppercase text-warning">Pending HQ approval</span>;
+        const st = String(row.status || 'inactive').toLowerCase();
+        if (st === 'active') return <span className="text-[10px] font-black uppercase text-success">Active</span>;
         if (st === 'blacklisted') return <span className="text-[10px] font-black uppercase text-danger">Blocked</span>;
-        return <span className="text-[10px] font-black uppercase text-success">Active</span>;
+        return <span className="text-[10px] font-black uppercase text-warning">Pending HQ approval</span>;
       }
     },
   ];
@@ -140,10 +162,22 @@ const Vendors = () => {
     <div className="space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Approved Vendors</h1>
-          <p className="text-secondary mt-1">Manage precision supply chain partners and procurement channels.</p>
+          <h1 className="text-3xl font-bold tracking-tight">
+            {isSuperAdminUser ? 'Vendor directory' : 'Approved vendors'}
+          </h1>
+          <p className="text-secondary mt-1">
+            {isSuperAdminUser
+              ? 'Approve pending partners so they appear in marketplace, checkout, and procurement for all other roles.'
+              : 'Manage precision supply chain partners and procurement channels.'}
+          </p>
+          {isSuperAdminUser && pendingApprovalCount > 0 && (
+            <p className="text-[10px] font-bold text-warning mt-2 uppercase tracking-widest flex items-center gap-2">
+              <CheckCircle size={14} className="text-warning shrink-0" />
+              {pendingApprovalCount} vendor{pendingApprovalCount !== 1 ? 's' : ''} pending your approval (inactive)
+            </p>
+          )}
           {!isSuperAdminUser && (
-            <p className="text-[10px] font-bold text-warning mt-2 uppercase tracking-widest">New vendors you add stay inactive until Super Admin approves them.</p>
+            <p className="text-[10px] font-bold text-warning mt-2 uppercase tracking-widest">New vendors you add stay hidden until Super Admin sets them to Active.</p>
           )}
         </div>
         <div className="flex gap-3">
@@ -151,11 +185,13 @@ const Vendors = () => {
             <input
               type="text"
               placeholder="Search vendors..."
-              className="bg-white/5 border border-border rounded-xl py-2 px-10 text-sm focus:outline-none focus:border-accent w-full"
+              className="bg-white/5 border border-border rounded-xl h-11 pl-11 pr-4 text-sm leading-none focus:outline-none focus:border-accent w-full"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
-            <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
+            <div className="absolute left-3 top-[24px] -translate-y-1/2 pointer-events-none">
+              <Search className="text-muted block" size={16} strokeWidth={2} />
+            </div>
           </div>
           {(hasMenuPermission('Vendors', 'can_add') || normalizeRole(currentUser?.role) === 'procurement') && (
             <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
@@ -168,7 +204,7 @@ const Vendors = () => {
       <div className="glass-card p-6">
         <Table
           columns={columns}
-          data={filteredVendors}
+          data={tableVendors}
           actions={true}
           onView={(item) => handleAction('view', item)}
           onEdit={(item) => handleAction('edit', item)}
@@ -185,6 +221,8 @@ const Vendors = () => {
                   e.stopPropagation();
                   try {
                     await updateVendor({ ...row, status: 'active' });
+                    await fetchVendors();
+                    await swalSuccess('Vendor approved', `${row.name || 'Vendor'} is now Active and visible to clients and staff.`);
                   } catch (err) {
                     window.alert(err?.message || 'Approve failed');
                   }
@@ -205,26 +243,26 @@ const Vendors = () => {
               <Store size={32} className="text-accent" />
             </div>
             <div>
-              <h4 className="text-xl font-bold font-heading italic">{vendors[0]?.name || 'No Vendors Available'}</h4>
+              <h4 className="text-xl font-bold font-heading italic">{spotlightVendor?.name || 'No active vendors'}</h4>
               <div className="flex items-center gap-1 text-accent">
-                {[1, 2, 3, 4, 5].map(i => <Star key={i} size={12} fill={i <= (vendors[0]?.rating / 20) ? "currentColor" : "none"} />)}
+                {[1, 2, 3, 4, 5].map(i => <Star key={i} size={12} fill={i <= ((spotlightVendor?.rating || 0) / 20) ? "currentColor" : "none"} />)}
               </div>
             </div>
           </div>
           <div className="space-y-3 pt-4 border-t border-border/50">
             <div className="flex items-center gap-3 text-sm">
               <Phone size={16} className="text-secondary" />
-              <span>{vendors[0]?.phone || 'N/A'}</span>
+              <span>{spotlightVendor?.phone || 'N/A'}</span>
             </div>
             <div className="flex items-center gap-3 text-sm">
               <Mail size={16} className="text-secondary" />
-              <span>{vendors[0]?.email || 'N/A'}</span>
+              <span>{spotlightVendor?.email || 'N/A'}</span>
             </div>
           </div>
           <button
             className="w-full mt-6 btn-primary"
-            onClick={() => handleDirectOrder(vendors[0]?.name || 'N/A')}
-            disabled={!vendors[0]}
+            onClick={() => handleDirectOrder(spotlightVendor?.name || 'N/A')}
+            disabled={!spotlightVendor}
           >
             Place Direct Order
           </button>

@@ -104,15 +104,25 @@ const ClientDashboard = () => {
             <p className="text-secondary text-[10px] md:text-xs mt-1 font-black uppercase tracking-[0.2em] opacity-70">{clientData?.tagline || "Institutional management and luxury asset tracking."}</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            {currentUser?.role !== 'customer' && (
-              <button
-                onClick={() => navigate('/dashboard/purchase-requests')}
-                className="px-6 py-2.5 bg-white/5 border border-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-[0.25em] hover:bg-accent hover:text-black hover:border-accent transition-all font-body active:scale-[0.98] flex items-center gap-2 group shadow-xl"
-              >
-                <FileText size={14} className="group-hover:rotate-12 transition-transform" />
-                Custom Requisition
-              </button>
-            )}
+            {(() => {
+              const role = normalizeRole(currentUser?.role);
+              const clientType = currentUser?.client_type || 'Individual';
+              const isPremium = currentUser?.plan?.toLowerCase().includes('premium') || currentUser?.is_upgraded;
+              const canPR = role !== 'customer' || clientType === 'Company' || (clientType === 'Individual' && isPremium);
+
+              if (canPR) {
+                return (
+                  <button
+                    onClick={() => navigate('/dashboard/purchase-requests')}
+                    className="px-6 py-2.5 bg-white/5 border border-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-[0.25em] hover:bg-accent hover:text-black hover:border-accent transition-all font-body active:scale-[0.98] flex items-center gap-2 group shadow-xl"
+                  >
+                    <FileText size={14} className="group-hover:rotate-12 transition-transform" />
+                    Custom Requisition
+                  </button>
+                );
+              }
+              return null;
+            })()}
             <button
               onClick={() => navigate('/dashboard/store')}
               className="btn-primary text-[10px] px-8 py-2.5 md:px-12 flex items-center gap-3 shadow-[0_0_30px_rgba(200,169,106,0.3)]"
@@ -143,7 +153,14 @@ const ClientDashboard = () => {
               </button>
               <button
                 type="button"
-                onClick={() => navigate('/signup')}
+                onClick={async () => {
+                  const confirmed = await swalConfirm('Upgrade Account', 'Upgrade to Premium Plan for $10/mo to unlock Strategic Purchase Requests?');
+                  if (confirmed.isConfirmed) {
+                    swalSuccess('Success', 'Account upgraded to Premium. Procurement features unlocked!');
+                    // In a real app, we'd call an API here.
+                    // For now, we'll mock the UI update if possible or just inform.
+                  }
+                }}
                 className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-accent hover:text-black hover:border-accent transition-all"
               >
                 <Sparkles size={16} /> Upgrade account
@@ -437,8 +454,6 @@ const ClientDashboard = () => {
                 {[
                   { label: "Marketplace Entry", path: "/dashboard/store?tab=catalog" },
                   ...(currentUser?.role !== 'customer' ? [{ label: "Custom Requisition", path: "/dashboard/store?tab=sheet" }] : []),
-                  { label: "Request Concierge", path: "/dashboard/client-events" },
-                  { label: "Audit Inventory", path: "/dashboard/client-inventory" },
                   { label: "Security Settings", path: "/dashboard/settings" }
                 ].map((action, i) => (
                   <button
@@ -463,7 +478,7 @@ const ClientDashboard = () => {
         selectedOrder={selectedOrder}
         onSave={handleSave}
         onDelete={handleDelete}
-        role="client"
+        role={currentUser?.role || 'client'}
       />
 
       <Modal

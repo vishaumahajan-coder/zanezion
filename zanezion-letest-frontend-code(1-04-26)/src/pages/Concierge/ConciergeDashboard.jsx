@@ -4,7 +4,7 @@ import StatusBadge from '../../components/StatusBadge';
 import Modal from '../../components/Modal';
 import CustomDatePicker from '../../components/CustomDatePicker';
 import {
-  Sparkles, Heart, Calendar, Users, Star, Gift, Package, Coffee, Clock
+  Sparkles, Heart, Calendar, Users, Star, Gift, Package, Coffee, Clock, Car, AlertCircle
 } from 'lucide-react';
 
 import { useData } from '../../context/GlobalDataContext';
@@ -12,6 +12,7 @@ import { useData } from '../../context/GlobalDataContext';
 const ConciergeDashboard = () => {
   const { 
     guestRequests = [], addGuestRequest, events = [], luxuryItems = [], addLuxuryItem, deliveries = [],
+    chauffeurRequests = [], fetchChauffeurRequests,
     fetchTickets, fetchLuxuryItems, fetchDeliveries, fetchClients 
   } = useData();
 
@@ -20,7 +21,8 @@ const ConciergeDashboard = () => {
     fetchLuxuryItems();
     fetchDeliveries();
     fetchClients();
-  }, [fetchTickets, fetchLuxuryItems, fetchDeliveries, fetchClients]);
+    fetchChauffeurRequests();
+  }, [fetchTickets, fetchLuxuryItems, fetchDeliveries, fetchClients, fetchChauffeurRequests]);
 
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isLuxuryModalOpen, setIsLuxuryModalOpen] = useState(false);
@@ -46,19 +48,34 @@ const ConciergeDashboard = () => {
   const nextEvents = (events || []).filter(e => e.status !== 'Completed').slice(0, 3);
   const highValueAssets = (luxuryItems || []).slice(0, 3);
 
+  // Chauffeur-specific stats for Concierge visibility
+  const pendingChauffeurs = (chauffeurRequests || []).filter(r => {
+    const s = String(r.status || '').toLowerCase().replace(/\s+/g, '_');
+    return ['pending', 'pending_review'].includes(s) && !r.driverName;
+  });
+  const activeChauffeurs = (chauffeurRequests || []).filter(r => {
+    const s = String(r.status || '').toLowerCase().replace(/\s+/g, '_');
+    return ['assigned', 'en_route', 'in_transit'].includes(s);
+  });
+  // Chauffeur deliveries from the deliveries array (for the status monitor)
+  const chauffeurDeliveries = (deliveries || []).filter(d =>
+    String(d.mission_type || '').toLowerCase() === 'chauffeur' &&
+    !['delivered', 'completed', 'cancelled'].includes(String(d.status || '').toLowerCase().replace(/\s+/g, '_'))
+  );
+
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white flex items-center gap-3">
-            <Sparkles className="text-accent shrink-0" size={28} />
-            Concierge Command Center
+    <div className="space-y-8 px-0 sm:px-2">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
+        <div className="min-w-0">
+          <h1 className="text-xl md:text-2xl xl:text-3xl font-bold tracking-tight text-white flex items-center gap-2 md:gap-3">
+            <Sparkles className="text-accent shrink-0" size={24} />
+            <span className="truncate">Concierge Command Center</span>
           </h1>
           <p className="text-secondary text-xs md:text-sm mt-1 uppercase font-bold tracking-widest leading-relaxed">
             Curating bespoke experiences and managing high-tier guest requests.
           </p>
         </div>
-        <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto">
+        <div className="flex flex-wrap sm:flex-row gap-3 w-full xl:w-auto">
           <button
             className="btn-secondary flex-1 sm:flex-none flex items-center justify-center gap-2 text-[10px] sm:text-xs py-3.5 px-6"
             onClick={() => setIsLuxuryModalOpen(true)}
@@ -74,9 +91,16 @@ const ConciergeDashboard = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
         <KpiCard label="Active Requests" value={(guestRequests || []).filter(r => r.status !== 'Completed').length} change="+3" type="increase" icon={Heart} />
         <KpiCard label="Upcoming Events" value={(events || []).filter(e => e.status !== 'Completed').length} change="Next 7 Days" type="neutral" icon={Calendar} />
+        <KpiCard
+          label="Chauffeur Pending"
+          value={pendingChauffeurs.length}
+          change={pendingChauffeurs.length > 0 ? 'Action Required' : 'All Clear'}
+          type={pendingChauffeurs.length > 0 ? 'decrease' : 'neutral'}
+          icon={Car}
+        />
         <KpiCard label="VIP Guests" value="28" change="+2" type="increase" icon={Users} />
         <KpiCard label="Rating" value="4.9/5" change="+0.1" type="increase" icon={Star} />
       </div>
@@ -118,23 +142,37 @@ const ConciergeDashboard = () => {
         {/* Chauffeur Service Monitor */}
         <div className="glass-card p-6 border-accent/10">
           <h3 className="text-sm font-bold mb-6 flex items-center gap-2">
-            <Star className="text-accent" size={18} /> Chauffeur Status
+            <Car className="text-accent" size={18} /> Chauffeur Dispatch
           </h3>
+
+          {/* Pending Action Alert */}
+          {pendingChauffeurs.length > 0 && (
+            <div className="p-3 bg-warning/10 border border-warning/30 rounded-xl mb-4 flex items-center gap-3">
+              <AlertCircle size={16} className="text-warning shrink-0" />
+              <p className="text-[10px] font-black text-warning uppercase tracking-widest">
+                {pendingChauffeurs.length} request{pendingChauffeurs.length > 1 ? 's' : ''} awaiting driver assignment
+              </p>
+            </div>
+          )}
+
           <div className="space-y-4">
-            {(deliveries || []).filter(d => d.mode === 'Road' && d.status !== 'Delivered').map((del, idx) => (
-              <div key={idx} className="p-3 bg-white/[0.02] border border-border rounded-xl">
+            {chauffeurDeliveries.map((del, idx) => (
+              <div key={idx} className="p-3 bg-white/[0.02] border border-border rounded-xl hover:border-accent/30 transition-all">
                 <div className="flex justify-between items-start mb-2">
-                  <p className="text-[11px] font-bold text-white">{del.item || 'Client Transit'}</p>
+                  <p className="text-[11px] font-bold text-white">{del.item || 'VIP Chauffeur Service'}</p>
                   <StatusBadge status={del.status} />
                 </div>
                 <div className="flex justify-between text-[9px] text-muted uppercase font-bold tracking-widest">
-                  <span>Pilot: {del.driver || 'Pending'}</span>
-                  <span className="text-accent">{del.eta || 'Calculating...'}</span>
+                  <span>Pilot: {del.driver || <span className="text-warning">Unassigned</span>}</span>
+                  <span className="text-accent">{del.eta || 'TBD'}</span>
                 </div>
+                {del.pickupLocation && (
+                  <p className="text-[9px] text-secondary mt-1 truncate">From: {del.pickupLocation} → {del.dropLocation || del.location || 'TBD'}</p>
+                )}
               </div>
             ))}
-            {(deliveries || []).filter(d => d.mode === 'Road' && d.status !== 'Delivered').length === 0 && (
-              <p className="text-xs text-secondary italic text-center py-4">No active surface transport dispatches.</p>
+            {chauffeurDeliveries.length === 0 && (
+              <p className="text-xs text-secondary italic text-center py-4">No active chauffeur dispatches.</p>
             )}
           </div>
         </div>

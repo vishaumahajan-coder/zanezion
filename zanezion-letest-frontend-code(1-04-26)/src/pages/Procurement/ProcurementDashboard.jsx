@@ -26,7 +26,7 @@ const ProcurementDashboard = () => {
   const reqList = purchaseRequests || [];
   const vendorList = vendors || [];
   const quoteList = quotes || [];
-  const approvedVendorList = vendorList.filter((v) => String(v?.status ?? 'active').toLowerCase() === 'active');
+  const approvedVendorList = vendorList.filter((v) => String(v?.status ?? '').toLowerCase() === 'active');
   const pendingVendorApprovals = vendorList.filter((v) => String(v?.status ?? '').toLowerCase() === 'inactive').length;
 
   const pendingRequestsCount = reqList.filter((r) => String(r.status || '').toLowerCase() === 'pending').length;

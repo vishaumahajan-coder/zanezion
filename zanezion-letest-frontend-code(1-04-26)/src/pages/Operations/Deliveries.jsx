@@ -5,7 +5,7 @@ import Modal from '../../components/Modal';
 import { useLocation } from 'react-router-dom';
 import {
   Plus, Search, Truck, MapPin, Camera,
-  Clock, Phone, Navigation, PackageCheck, PenTool, Image as ImageIcon, Ship, Plane, AlertCircle, RefreshCcw, CheckCircle2, Activity, Trash2, Car
+  Clock, Phone, Navigation, PackageCheck, PenTool, Image as ImageIcon, Ship, Plane, AlertCircle, RefreshCcw, CheckCircle2, Activity, Trash2, Car, UserPlus
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Pagination from '../../components/Common/Pagination';
@@ -13,8 +13,24 @@ import Pagination from '../../components/Common/Pagination';
 import { useData } from '../../context/GlobalDataContext';
 import CustomDatePicker from '../../components/CustomDatePicker';
 
+/** Roles that can be chosen as delivery / field drivers (not only `staff`). */
+function isAssignableDeliveryRole(roleRaw) {
+  const r = String(roleRaw || '').toLowerCase().replace(/\s+/g, '_');
+  return ['staff', 'logistics', 'operations', 'operation', 'driver', 'field_staff', 'concierge'].includes(r);
+}
+
+function displayDeliveryStatus(raw) {
+  const k = String(raw || '').toLowerCase().replace(/\s+/g, '_');
+  if (k === 'pending' || k === 'pending_pickup' || k === 'pending_review') return 'Pending pickup';
+  if (k === 'assigned' || k === 'accepted') return 'Driver assigned';
+  if (k === 'en_route' || k === 'in_transit' || k === 'dispatched') return 'Out for delivery';
+  if (k === 'delivered' || k === 'completed') return 'Delivered';
+  if (k === 'cancelled' || k === 'canceled') return 'Cancelled';
+  return raw ? String(raw) : '—';
+}
+
 const Deliveries = () => {
-  const { deliveries, addDelivery, updateDelivery, deleteDelivery, users, fleet, fetchDeliveries, fetchStaff, hasMenuPermission, warehouses, fetchWarehouses } = useData();
+  const { deliveries, addDelivery, updateDelivery, deleteDelivery, users, fleet, fetchDeliveries, fetchStaff, hasMenuPermission, warehouses, fetchWarehouses, currentUser } = useData();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [debounceSearch, setDebounceSearch] = useState('');
@@ -35,6 +51,11 @@ const Deliveries = () => {
     fetchStaff();
   }, [fetchDeliveries, fetchWarehouses, fetchStaff]);
 
+  const portalRole = String(currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
+  const canAssignDriverUi =
+    hasMenuPermission('Deliveries', 'can_edit') ||
+    ['logistics', 'super_admin', 'superadmin', 'admin', 'operations', 'operation', 'concierge'].includes(portalRole);
+
   const handlePageChange = (newPage) => {
     setCurrentPage(newPage);
   };
@@ -44,7 +65,7 @@ const Deliveries = () => {
   const [selectedDelivery, setSelectedDelivery] = useState(null);
   const [formData, setFormData] = useState({
     items: [{ name: '', qty: 1, weight: '', length: '', width: '', height: '' }],
-    missionType: 'Logistics', // 'Logistics' or 'Chauffeur'
+    missionType: 'Delivery', // 'Delivery', 'Pickup', 'Transfer', or 'Chauffeur'
     passengerInfo: { name: '', count: 1, phone: '' },
     packageDetails: { weight: '', dimensions: '', type: 'General' },
     orderId: '',
@@ -102,15 +123,22 @@ const Deliveries = () => {
         orderId: orderRef,
         items: Array.isArray(st.items) ? st.items : [],
         pickupLocation: st.location || 'TBD - Warehouse',
+        dropLocation: st.location || '',
         mode: st.mode || 'Road',
-        missionType: 'Logistics',
-        passengerInfo: { name: st.client || '', count: 1, phone: '' }
+        missionType: 'Delivery',
+        passengerInfo: { name: st.client || '', count: 1, phone: '' },
+        delivery_instructions: st.deliveryInstructions || '',
+        delivery_fee: st.deliveryFee != null && st.deliveryFee !== '' ? Number(st.deliveryFee) : 0,
       });
       window.history.replaceState({}, document.title);
     }
   }, [locationState]);
 
-  const filteredDeliveries = deliveries.filter(d =>
+  const logisticsOnlyDeliveries = deliveries.filter((d) =>
+    String(d.mission_type || '').toLowerCase() !== 'chauffeur'
+  );
+
+  const filteredDeliveries = logisticsOnlyDeliveries.filter(d =>
     String(d.id).toLowerCase().includes(searchTerm.toLowerCase()) ||
     String(d.orderId).toLowerCase().includes(searchTerm.toLowerCase()) ||
     (d.item && d.item.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -123,31 +151,46 @@ const Deliveries = () => {
     setModalType(nextModalType);
     const parseItems = (raw) => {
       if (Array.isArray(raw)) return raw;
-      if (typeof raw === 'string') { try { const p = JSON.parse(raw); if (Array.isArray(p)) return p; } catch(e) {} }
+      if (typeof raw === 'string') { try { const p = JSON.parse(raw); if (Array.isArray(p)) return p; } catch (e) { } }
       return null;
     };
     const nextFormData = del && del.id ? {
       ...del,
-      items: parseItems(del.items) || [{ name: del.item || '', qty: 1, weight: '', length: '', width: '', height: '' }],
+      items: parseItems(del.package_details) || [{ name: del.item || '', qty: 1, weight: '', length: '', width: '', height: '' }],
+      delivery_instructions: del.delivery_instructions || del.order_instructions || '',
+      delivery_fee: del.delivery_fee || 0,
       pod: del.pod || { signature: null, image: null, actualTime: null }
     } : {
-      items: parseItems(del?.items) || [{ name: '', qty: 1, weight: '', length: '', width: '', height: '' }],
-      missionType: del?.passengerInfo?.name ? 'Chauffeur' : 'Logistics',
-      passengerInfo: del?.passengerInfo || { name: '', count: 1, phone: '' },
+      items: [{ name: '', qty: 1, weight: '', length: '', width: '', height: '' }],
+      missionType: 'Delivery',
+      passengerInfo: { name: '', count: 1, phone: '' },
       packageDetails: { weight: '', dimensions: '', type: 'General' },
-      orderId: del?.orderId || '',
+      orderId: '',
       vehicle: '',
       vesselOrFlight: '',
       eta: new Date().toISOString().split('T')[0],
-      requestDate: del?.requestDate || new Date().toISOString().split('T')[0],
-      dueDate: del?.dueDate || del?.eventDate || new Date().toISOString().split('T')[0],
-      location: del?.pickupLocation || '',
-      pickupLocation: del?.pickupLocation || '',
+      requestDate: new Date().toISOString().split('T')[0],
+      dueDate: new Date().toISOString().split('T')[0],
+      location: '',
+      pickupLocation: '',
       dropLocation: '',
       status: 'Pending',
       driver: '',
-      mode: del?.mode || 'Road',
-      pod: { signature: null, image: null, actualTime: null }
+      mode: 'Road',
+      delivery_instructions: '',
+      delivery_fee: 0,
+      pod: { signature: null, image: null, actualTime: null },
+      ...(del && !del.id ? {
+        orderId: del.orderId || '',
+        pickupLocation: del.pickupLocation || '',
+        dropLocation: del.dropLocation || '',
+        missionType: del.missionType || 'Delivery',
+        mode: del.mode || 'Road',
+        items: Array.isArray(del.items) && del.items.length ? del.items : [{ name: '', qty: 1, weight: '', length: '', width: '', height: '' }],
+        delivery_instructions: del.delivery_instructions || del.order_instructions || '',
+        delivery_fee: del.delivery_fee != null ? del.delivery_fee : 0,
+        passengerInfo: del.passengerInfo || { name: '', count: 1, phone: '' },
+      } : {}),
     };
     // Quick "Complete Delivery" flow from list action.
     setFormData(type === 'delivered' ? { ...nextFormData, status: 'Delivered' } : nextFormData);
@@ -185,6 +228,7 @@ const Deliveries = () => {
   const columns = [
     { header: "Dispatch ID", accessor: "id" },
     { header: "Order Ref", accessor: "orderId" },
+    { header: "Personnel", accessor: "driver" },
     {
       header: "Manifest Summary",
       accessor: "items",
@@ -192,6 +236,18 @@ const Deliveries = () => {
         if (!item.items || item.items.length === 0) return item.item || "No Items";
         if (item.items.length === 1) return item.items[0].name;
         return `${item.items[0].name} (+${item.items.length - 1})`;
+      }
+    },
+    {
+      header: "Instructions",
+      accessor: "delivery_instructions",
+      render: (item) => {
+        const t = String(item.delivery_instructions || item.order_instructions || '').replace(/\[request_meta\].*/g, '').trim();
+        return (
+          <span className="text-[10px] text-secondary max-w-[160px] truncate block" title={t || undefined}>
+            {t || "—"}
+          </span>
+        );
       }
     },
     {
@@ -210,14 +266,16 @@ const Deliveries = () => {
     {
       header: "Status",
       accessor: "status",
-      render: (item) => (
+      render: (item) => {
+        const label = displayDeliveryStatus(item.status);
+        return (
         <div className="space-y-1">
           <div className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase text-center border ${item.status === 'Completed' || item.status === 'Delivered' ? 'bg-success/10 border-success/30 text-success' :
             item.status === 'Failed' ? 'bg-danger/10 border-danger/30 text-danger' :
               item.status === 'Re-routed' ? 'bg-warning/10 border-warning/30 text-warning' :
                 'bg-accent/10 border-accent/30 text-accent'
             }`}>
-            {item.status}
+            {label}
           </div>
           {item.clientConfirmed && (
             <div className="flex items-center justify-center gap-1 text-[8px] font-bold text-success uppercase">
@@ -225,7 +283,8 @@ const Deliveries = () => {
             </div>
           )}
         </div>
-      )
+        );
+      }
     },
   ];
 
@@ -246,8 +305,8 @@ const Deliveries = () => {
       <div className="glass-card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-accent/25 bg-white/[0.02]">
         <p className="text-xs text-secondary max-w-xl">
           <span className="font-black text-white uppercase tracking-widest text-[10px] block mb-1">Routing</span>
-          Marketplace &amp; parcel fulfilment stays on this board for field staff assignment.{' '}
-          <strong className="text-accent">Chauffeur / VIP</strong> missions belong in the Chauffeur protocol.
+          <strong className="text-white">Flow:</strong> Admin approves order → mission appears here as <em>Pending pickup</em> → use <strong className="text-accent">Assign driver</strong> or <strong className="text-accent">Edit</strong>, pick staff, Save → driver sees the run in their portal.{' '}
+          <strong className="text-accent">Chauffeur / VIP</strong> rides: Chauffeur protocol.
         </p>
         <Link to="/dashboard/chauffeur" className="btn-secondary inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest shrink-0 py-2.5 px-4">
           <Car size={16} className="text-accent" /> Chauffeur protocol
@@ -275,26 +334,46 @@ const Deliveries = () => {
           onView={(item) => handleAction('view', item)}
           onEdit={(item) => handleAction('edit', item)}
           onDelete={(item) => handleAction('delete', item)}
-          canEdit={hasMenuPermission('Deliveries', 'can_edit')}
+          canEdit={canAssignDriverUi}
           canDelete={hasMenuPermission('Deliveries', 'can_delete')}
           customAction={(item) => (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleAction('delivered', item);
-              }}
-              className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide text-success border border-success/30 bg-success/10 hover:bg-success/20 transition-all"
-              title="Complete Delivery (POD)"
-            >
-              Delivered
-            </button>
+            <div className="flex items-center gap-1 flex-wrap justify-end">
+              {canAssignDriverUi && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAction('edit', item);
+                  }}
+                  className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide text-accent border border-accent/35 bg-accent/10 hover:bg-accent/20 transition-all flex items-center gap-1"
+                  title="Assign driver / vehicle and save"
+                >
+                  <UserPlus size={12} /> Assign
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAction('delivered', item);
+                }}
+                className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wide text-success border border-success/30 bg-success/10 hover:bg-success/20 transition-all"
+                title="Complete Delivery (POD)"
+              >
+                Delivered
+              </button>
+            </div>
           )}
         />
+        {filteredDeliveries.length === 0 && (
+          <div className="mt-4 text-center text-[10px] font-black uppercase tracking-widest text-muted">
+            No logistics deliveries found. Chauffeur rides are tracked in Chauffeur protocol.
+          </div>
+        )}
         {filteredDeliveries.length > itemsPerPage && (
-          <Pagination 
-            pagination={{ total: filteredDeliveries.length, page: currentPage, limit: itemsPerPage, totalPages: Math.ceil(filteredDeliveries.length / itemsPerPage) }} 
-            onPageChange={handlePageChange} 
+          <Pagination
+            pagination={{ total: filteredDeliveries.length, page: currentPage, limit: itemsPerPage, totalPages: Math.ceil(filteredDeliveries.length / itemsPerPage) }}
+            onPageChange={handlePageChange}
           />
         )}
       </div>
@@ -427,6 +506,43 @@ const Deliveries = () => {
                   </div>
                 </div>
 
+                {formData.missionType !== 'Chauffeur' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="p-4 bg-accent/5 rounded-2xl border border-accent/15 space-y-1">
+                      <p className="text-[9px] font-black text-muted uppercase tracking-widest">Customer drop-off address</p>
+                      <p className="text-sm font-bold text-white leading-snug">{formData.dropLocation || formData.location || '—'}</p>
+                    </div>
+                    {(() => {
+                      const cleanInst = String(formData.delivery_instructions || '').replace(/\[request_meta\].*/g, '').trim();
+                      if (!cleanInst) return null;
+                      return (
+                        <div className="p-4 bg-warning/5 rounded-2xl border border-warning/20 space-y-1">
+                          <p className="text-[9px] font-black text-warning uppercase tracking-widest flex items-center gap-2">
+                            <AlertCircle size={12} /> Delivery instructions
+                          </p>
+                          <p className="text-xs text-secondary font-bold leading-relaxed whitespace-pre-wrap">
+                            {cleanInst}
+                          </p>
+                        </div>
+                      );
+                    })()}
+                    <div className="p-4 bg-white/[0.03] rounded-2xl border border-white/10 sm:col-span-2 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[9px] font-black text-muted uppercase tracking-widest">Manifest / items</p>
+                        <p className="text-sm font-bold text-white">
+                          {Array.isArray(formData.items) && formData.items.length
+                            ? formData.items.map((it) => `${it.name || 'Item'} ×${it.qty ?? 1}`).join(' · ')
+                            : (formData.item || '—')}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[9px] font-black text-muted uppercase tracking-widest">Est. collection (order total)</p>
+                        <p className="text-lg font-black text-accent">${parseFloat(formData.delivery_fee || 0).toFixed(2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Logistics Intelligence */}
                 <div className="bg-white/[0.02] rounded-3xl p-6 border border-white/5 space-y-6">
                   <h4 className="text-[10px] font-black text-accent uppercase tracking-[0.2em] border-b border-accent/10 pb-2">Logistics Intelligence</h4>
@@ -482,7 +598,7 @@ const Deliveries = () => {
                 </div>
 
                 {/* Manifest Details - Show only for Logistics */}
-                {formData.missionType === 'Logistics' && (
+                {formData.missionType !== 'Chauffeur' && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <h4 className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Manifest Payload</h4>
@@ -556,7 +672,7 @@ const Deliveries = () => {
                   <div className="space-y-1 sm:col-span-2">
                     <label className="text-[10px] font-bold text-muted uppercase">Selection: Mission Classification</label>
                     <div className="flex gap-2">
-                      {['Logistics', 'Chauffeur'].map(type => (
+                      {['Delivery', 'Chauffeur'].map(type => (
                         <button
                           key={type}
                           onClick={() => setFormData({ ...formData, missionType: type })}
@@ -592,16 +708,24 @@ const Deliveries = () => {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-muted uppercase">Driver / Asset Pilot</label>
+                    <label className="text-[10px] font-bold text-muted uppercase">Staff / Delivery Personnel</label>
                     <select
                       className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:border-accent outline-none font-bold appearance-none cursor-pointer"
                       value={formData.driver}
-                      onChange={(e) => setFormData({ ...formData, driver: e.target.value })}
+                      onChange={(e) => {
+                        const name = e.target.value;
+                        const user = (users || []).find((u) => u.name === name);
+                        setFormData({
+                          ...formData,
+                          driver: name,
+                          assigned_driver: user?.id != null ? user.id : null,
+                        });
+                      }}
                       disabled={modalType === 'view'}
                     >
                       <option value="">Assign Personnel...</option>
-                      {users.filter(u => ['staff', 'operation', 'logistics', 'concierge'].includes(u.role)).map(u => (
-                        <option key={u.id} value={u.name}>{u.name} — {u.role}</option>
+                      {(users || []).filter((u) => isAssignableDeliveryRole(u.role)).map((u) => (
+                        <option key={u.id} value={u.name}>{u.name} ({u.role})</option>
                       ))}
                     </select>
                   </div>
@@ -661,17 +785,17 @@ const Deliveries = () => {
 
                   <div className="space-y-1 sm:col-span-2 p-4 bg-white/5 border border-border rounded-3xl">
                     <h4 className="text-[10px] font-black text-accent uppercase tracking-widest mb-4 italic text-center border-b border-accent/10 pb-2">
-                      {formData.missionType === 'Logistics' ? 'Goods Manifest Details' : 'Passenger & Concierge Details'}
+                      {formData.missionType !== 'Chauffeur' ? 'Goods Manifest Details' : 'Passenger & Concierge Details'}
                     </h4>
-                    {formData.missionType === 'Logistics' ? (
+                    {formData.missionType !== 'Chauffeur' ? (
                       <div className="space-y-4">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="space-y-1">
                             <label className="text-[8px] font-bold text-muted uppercase">Pickup Location (Hub)</label>
-                            <select 
-                              value={formData.pickupLocation || ''} 
-                              onChange={(e) => setFormData({ ...formData, pickupLocation: e.target.value })} 
-                              className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs outline-none focus:border-accent font-bold appearance-none cursor-pointer" 
+                            <select
+                              value={formData.pickupLocation || ''}
+                              onChange={(e) => setFormData({ ...formData, pickupLocation: e.target.value })}
+                              className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs outline-none focus:border-accent font-bold appearance-none cursor-pointer"
                               disabled={modalType === 'view'}
                             >
                               <option value="">Select Warehouse / Hub...</option>

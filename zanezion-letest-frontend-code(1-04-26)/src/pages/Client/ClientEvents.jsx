@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import Modal from '../../components/Modal';
 import CustomDatePicker from '../../components/CustomDatePicker';
 import { useData } from '../../context/GlobalDataContext';
-import { Calendar, Plus, Clock, Star, MapPin, Search, Trash2 } from 'lucide-react';
+import { Calendar, Plus, Clock, Star, MapPin, Search, Trash2, Edit } from 'lucide-react';
 
 const ClientEvents = () => {
-    const { events, addEvent, deleteEvent, currentUser, clients, fetchTickets } = useData();
+    const { events, addEvent, updateEvent, deleteEvent, currentUser, clients, fetchTickets } = useData();
 
     useEffect(() => {
         if (fetchTickets) fetchTickets();
@@ -28,8 +28,16 @@ const ClientEvents = () => {
     const handleOpenModal = (type, evt = null) => {
         setModalType(type);
         setSelectedEvent(evt);
-        if (type === 'view' && evt) {
-            setFormData({ ...evt });
+        if ((type === 'view' || type === 'edit') && evt) {
+            const standardTypes = ['Private Residence', 'Yacht / Onboard', 'Luxury Resort', 'Secret Beach'];
+            const isStandard = standardTypes.includes(evt.location);
+            
+            setFormData({ 
+                ...evt,
+                locationType: isStandard ? evt.location : (evt.location ? 'Other' : 'Private Residence'),
+                guests: evt.guestCount || evt.guests || 10,
+                moodBoard: evt.moodBoardUrl || evt.moodBoard || ''
+            });
         } else {
             setFormData({ title: '', date: '', location: '', guests: 10, type: 'Private', specialRequests: '', plannerName: '', moodBoard: '' });
         }
@@ -37,7 +45,7 @@ const ClientEvents = () => {
     };
 
     const handleSave = () => {
-        addEvent({
+        const payload = {
             ...formData,
             title: formData.title,
             guestCount: formData.guests || formData.guestCount || 0,
@@ -45,9 +53,20 @@ const ClientEvents = () => {
             specialRequests: formData.specialRequests || '',
             moodBoardUrl: formData.moodBoard || '',
             client: companyName || clientName,
-            status: 'Pending Approval',
-            createdAt: new Date().toISOString()
-        });
+            status: modalType === 'add' ? 'Pending Approval' : formData.status,
+        };
+
+        if (modalType === 'add') {
+            addEvent({
+                ...payload,
+                createdAt: new Date().toISOString()
+            });
+        } else {
+            updateEvent({
+                ...selectedEvent,
+                ...payload
+            });
+        }
         setIsModalOpen(false);
     };
 
@@ -98,16 +117,24 @@ const ClientEvents = () => {
                                 <span>{evt.location}</span>
                             </div>
                         </div>
-                        <div className="flex gap-2 mt-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex gap-2 mt-6 transition-all">
                             <button
                                 onClick={() => handleOpenModal('view', evt)}
-                                className="flex-1 btn-secondary py-2 text-xs"
+                                className="flex-1 btn-secondary py-2 text-[10px] font-bold uppercase"
                             >
-                                View Details
+                                View
+                            </button>
+                            <button
+                                onClick={() => handleOpenModal('edit', evt)}
+                                className="px-3 py-2 bg-accent/10 border border-accent/20 text-accent rounded-lg hover:bg-accent hover:text-black transition-all"
+                                title="Edit Event"
+                            >
+                                <Edit size={14} />
                             </button>
                             <button
                                 onClick={() => { if (window.confirm('Delete this event?')) deleteEvent(evt.id); }}
                                 className="px-3 py-2 bg-danger/10 border border-danger/20 text-danger rounded-lg hover:bg-danger hover:text-white transition-all"
+                                title="Delete Event"
                             >
                                 <Trash2 size={14} />
                             </button>

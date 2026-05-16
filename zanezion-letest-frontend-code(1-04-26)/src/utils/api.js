@@ -5,10 +5,27 @@ import axios from 'axios';
  * Must match any page that uses raw `fetch` to the same host.
  */
 export const API_BASE_URL =
-  import.meta.env.VITE_API_URL || 'https://zanzoin-backend-production.up.railway.app/api';
+  import.meta.env.VITE_API_URL ||
+  'https://zanzone-production.up.railway.app/api';
+// 'http://localhost:5000/api';
 
 /** Origin only (for static files / image paths) — strips trailing /api */
 export const BACKEND_ORIGIN = String(API_BASE_URL).replace(/\/api\/?$/, '');
+
+/** Resolves relative paths to absolute URLs using BACKEND_ORIGIN */
+export const toAbsoluteImageUrl = (rawPath) => {
+  if (!rawPath) return null;
+  if (typeof rawPath === 'object' && rawPath != null && typeof rawPath.url === 'string') {
+    return toAbsoluteImageUrl(rawPath.url);
+  }
+  if (typeof rawPath !== 'string') return null;
+  const trimmed = rawPath.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('http') || trimmed.startsWith('data:')) return trimmed;
+  // Ensure path starts with / for joining
+  const path = trimmed.startsWith('/') ? trimmed : `/${trimmed.replace(/\\/g, '/')}`;
+  return `${BACKEND_ORIGIN}${path}`;
+};
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -25,6 +42,16 @@ api.interceptors.request.use(
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    /** Let the browser set `multipart/form-data` + boundary. Default `application/json` breaks file uploads if Content-Type is forced without boundary. */
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      const h = config.headers;
+      if (h && typeof h.delete === 'function') {
+        h.delete('Content-Type');
+      } else if (h && typeof h === 'object') {
+        delete h['Content-Type'];
+        delete h['content-type'];
+      }
     }
     return config;
   },

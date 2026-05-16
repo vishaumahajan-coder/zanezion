@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useData } from '../../context/GlobalDataContext';
 import { User, Mail, Phone, Lock, Save, Shield, Calendar, CreditCard, Hash, Briefcase, TrendingUp } from 'lucide-react';
-import api from '../../utils/api';
 
 const Profile = () => {
-    const { currentUser } = useData();
+    const { currentUser, updateUser } = useData();
     const [formData, setFormData] = useState({
         name: '',
         email: '',
@@ -45,13 +44,21 @@ const Profile = () => {
         setMessage({ type: '', text: '' });
 
         try {
-            const res = await api.put('/auth/profile', formData);
-            if (res.data && res.data.success) {
-                setMessage({ type: 'success', text: 'Profile updated successfully! Some changes may require a fresh login to reflect completely.' });
-                // Clear password field after successful update
+            const payload = {
+                ...currentUser,
+                ...formData,
+                id: currentUser?.id,
+                bank_name: formData.bankName,
+                account_number: formData.accountNumber,
+                routing_number: formData.routingNumber,
+                nib_number: formData.nibNumber,
+            };
+            const res = await updateUser(payload);
+            if (res?.success || res?.data) {
+                setMessage({ type: 'success', text: 'Profile updated successfully.' });
                 setFormData(prev => ({ ...prev, password: '' }));
             } else {
-                setMessage({ type: 'error', text: res.data?.message || 'Failed to update profile' });
+                setMessage({ type: 'error', text: 'Failed to update profile' });
             }
         } catch (error) {
             setMessage({ type: 'error', text: error.response?.data?.message || 'An error occurred while updating profile' });

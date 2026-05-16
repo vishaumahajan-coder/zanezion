@@ -4,7 +4,7 @@ import { Clock, MapPin, Plus, Trash2, Tag, DollarSign, Package, Printer } from '
 import CustomDatePicker from './CustomDatePicker';
 import { useData } from '../context/GlobalDataContext';
 import { ORDER_STATUS_OPTIONS, coerceOrderStatusToApi, isoDateSlice, displayOrderStatus } from '../utils/orderWorkflow';
-import { normalizeRole, roleCanCreateInstitutionalOrder } from '../utils/authUtils';
+import { normalizeRole, roleCanCreateInstitutionalOrder, roleCanUpdateOrderStatus } from '../utils/authUtils';
 
 const todayIso = () => new Date().toISOString().split('T')[0];
 const normalizeIsoDate = (v) => {
@@ -19,10 +19,12 @@ const clampDueDateToRequest = (requestDate, dueDate) => {
 };
 
 const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelete, initialData, role }) => {
-    const { currentUser, vendors, clients, fetchVendors, fetchClients, customerUsers, fetchCustomerUsers } = useData();
-    const portalRole = normalizeRole(role || currentUser?.role || '');
+    const { currentUser, marketplaceVendors = [], clients, fetchVendors, fetchClients, customerUsers, fetchCustomerUsers } = useData();
+    /** Logged-in user role drives permissions (parent `role` prop is often a portal default, e.g. ClientDashboard). */
+    const portalRole = normalizeRole(currentUser?.role || role || '');
     const isPersonalCustomer = portalRole === 'customer';
     const canCreateManualOrder = roleCanCreateInstitutionalOrder(portalRole);
+    const canEditOrderStatus = roleCanUpdateOrderStatus(portalRole);
 
     useEffect(() => {
         if (isOpen) {
@@ -32,32 +34,43 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
         }
     }, [isOpen, fetchVendors, fetchClients, fetchCustomerUsers]);
 
-    // Merge all client sources into one unified list for dropdown
-    const allClientsForDropdown = React.useMemo(() => {
-        const companyClients = (clients || []).map(c => ({
-            id: `company_${c.id}`,
-            rawId: c.id,
-            name: c.business_name || c.name,
-            email: c.email,
-            type: c.client_type === 'Business' || c.tenant_type === 'business' ? 'Business Client' :
-                  c.client_type === 'SaaS' || c.tenant_type === 'saas' ? 'SaaS Client' : 'Personal Client',
-            source: 'company'
-        }));
+    // Create-order picker should list only actual customers/personal accounts (no business or SaaS client accounts).
+    const customerOnlyForDropdown = React.useMemo(() => {
+        const fromClients = (clients || [])
+            .filter((c) => {
+                const ct = String(c.client_type || c.clientType || '').trim().toLowerCase();
+                const tt = String(c.tenant_type || c.tenantType || '').trim().toLowerCase();
+                const role = String(c.role || c.user_role || '').trim().toLowerCase();
+                return ct === 'personal' || tt === 'personal' || role === 'customer';
+            })
+            .map((c) => ({
+                id: `client_${c.id}`,
+                rawId: c.id,
+                name: c.name || c.business_name || c.company_name || '',
+                email: c.email,
+                type: 'Personal Account',
+                source: 'client',
+            }));
 
-        const customerList = (customerUsers || []).map(u => ({
+        const fromUsers = (customerUsers || []).map((u) => ({
             id: `user_${u.id}`,
             rawId: u.id,
             name: u.name,
             email: u.email,
             type: 'Personal Account',
-            source: 'user'
+            source: 'user',
         }));
 
-        // Remove duplicates by email
-        const emails = new Set(companyClients.map(c => c.email?.toLowerCase()));
-        const uniqueCustomers = customerList.filter(u => !emails.has(u.email?.toLowerCase()));
+        // Deduplicate by email first, then by name fallback.
+        const seen = new Set();
+        const merged = [...fromClients, ...fromUsers].filter((x) => {
+            const key = (x.email || '').trim().toLowerCase() || `name:${String(x.name || '').trim().toLowerCase()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
 
-        return [...companyClients, ...uniqueCustomers];
+        return merged;
     }, [clients, customerUsers]);
     const [formData, setFormData] = useState({
         client: '',
@@ -115,7 +128,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
             const dueDate = clampDueDateToRequest(requestDate, selectedOrder.dueDate || selectedOrder.due_date);
             // Try to match existing order's client in dropdown list
             const existingClientId = selectedOrder.clientId || selectedOrder.client_id || '';
-            const matchedDropdown = allClientsForDropdown.find(c =>
+            const matchedDropdown = customerOnlyForDropdown.find(c =>
                 String(c.rawId) === String(existingClientId)
             );
             setFormData({
@@ -145,7 +158,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                 amenities: selectedOrder.amenities || ''
             });
         }
-    }, [modalType, selectedOrder, isOpen, initialData, portalRole, currentUser?.name]);
+    }, [modalType, selectedOrder, isOpen, initialData, portalRole, currentUser?.name, currentUser?.role, currentUser?.email, clients, customerOnlyForDropdown]);
 
     const handleAddItem = () => {
         setFormData({ ...formData, items: [...formData.items, { name: '', qty: 1, price: '' }] });
@@ -176,7 +189,11 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
         }
         const requestDate = normalizeIsoDate(formData.requestDate) || todayIso();
         const dueDate = clampDueDateToRequest(requestDate, formData.dueDate);
-        onSave({ ...formData, requestDate, dueDate, total: parseFloat(calculateTotal()) });
+        const payload = { ...formData, requestDate, dueDate, total: parseFloat(calculateTotal()) };
+        if (!canEditOrderStatus) {
+            delete payload.status;
+        }
+        onSave(payload);
     };
 
     return (
@@ -215,7 +232,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                         value={formData.status}
                                         onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                                         className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
-                                        disabled={modalType === 'view' || isPersonalCustomer}
+                                        disabled={modalType === 'view' || !canEditOrderStatus}
                                     >
                                         {ORDER_STATUS_OPTIONS.map(({ value, label }) => (
                                             <option key={value} value={value}>{label}</option>
@@ -237,7 +254,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                         value={formData.clientDropdownId || ''}
                                         onChange={(e) => {
                                             const val = e.target.value;
-                                            const selected = allClientsForDropdown.find(c => c.id === val);
+                                            const selected = customerOnlyForDropdown.find(c => c.id === val);
                                             setFormData({
                                                 ...formData,
                                                 clientDropdownId: val,
@@ -251,26 +268,13 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                         <option value="">
                                             {formData.client
                                                 ? `Current: ${formData.client}`
-                                                : 'Select Client / Customer...'}
+                                                : 'Select Customer...'}
                                         </option>
-                                        {allClientsForDropdown.length > 0 && (
-                                            <>
-                                                <optgroup label="── Company Clients ──">
-                                                    {allClientsForDropdown.filter(c => c.source === 'company').map(c => (
-                                                        <option key={c.id} value={c.id}>
-                                                            {c.name} ({c.type})
-                                                        </option>
-                                                    ))}
-                                                </optgroup>
-                                                <optgroup label="── Personal Customers ──">
-                                                    {allClientsForDropdown.filter(c => c.source === 'user').map(c => (
-                                                        <option key={c.id} value={c.id}>
-                                                            {c.name} (Personal Account)
-                                                        </option>
-                                                    ))}
-                                                </optgroup>
-                                            </>
-                                        )}
+                                        {customerOnlyForDropdown.map(c => (
+                                            <option key={c.id} value={c.id}>
+                                                {c.name} ({c.type})
+                                            </option>
+                                        ))}
                                     </select>
                                 </div>
                             )}
@@ -381,6 +385,14 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                     />
                                 </div>
                             </div>
+                            {modalType === 'view' && String(selectedOrder?.delivery_instructions || '').trim() && (
+                                <div className="space-y-1 p-4 rounded-xl border border-warning/25 bg-warning/5">
+                                    <label className="text-[10px] font-bold text-warning uppercase tracking-widest">Customer delivery instructions</label>
+                                    <p className="text-sm text-secondary font-medium whitespace-pre-wrap leading-relaxed">
+                                        {selectedOrder.delivery_instructions}
+                                    </p>
+                                </div>
+                            )}
                             <div className="space-y-3 pt-2">
                                 <div className="flex items-center justify-between">
                                     <label className="text-[10px] font-bold text-muted uppercase">Vendor (Optional)</label>
@@ -389,7 +401,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                 <select
                                     value={formData.vendorId}
                                     onChange={(e) => {
-                                        const selectedVendor = vendors.find(v => v.id.toString() === e.target.value);
+                                        const selectedVendor = marketplaceVendors.find(v => v.id.toString() === e.target.value);
                                         setFormData({ 
                                             ...formData, 
                                             vendorId: e.target.value,
@@ -400,7 +412,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                                     disabled={modalType === 'view'}
                                 >
                                     <option value="">Select Vendor...</option>
-                                    {vendors.map(v => (
+                                    {marketplaceVendors.map(v => (
                                         <option key={v.id} value={v.id}>{v.name} {v.category ? `(${v.category})` : ''}</option>
                                     ))}
                                 </select>
@@ -412,6 +424,7 @@ const OrderModal = ({ isOpen, onClose, modalType, selectedOrder, onSave, onDelet
                             <div className="space-y-1">
                                 <CustomDatePicker
                                     label="Due Date"
+                                    disabled={modalType === 'view'}
                                     selectedDate={modalType === 'view'
                                         ? (isoDateSlice(selectedOrder?.due_date || selectedOrder?.dueDate) || isoDateSlice(formData.dueDate))
                                         : formData.dueDate}

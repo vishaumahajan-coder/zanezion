@@ -2,8 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
+import { formatDateDisplayDMY } from '../utils/orderWorkflow';
 
-const CustomDatePicker = ({ selectedDate, onChange, label, placeholder = "Select Date" }) => {
+const CustomDatePicker = ({ selectedDate, onChange, label, placeholder = "Select Date", disabled = false }) => {
     const [isOpen, setIsOpen] = useState(false);
 
     const parseLocalDate = (dateStr) => {
@@ -88,6 +89,10 @@ const CustomDatePicker = ({ selectedDate, onChange, label, placeholder = "Select
             });
         }
     };
+
+    useEffect(() => {
+        if (disabled) setIsOpen(false);
+    }, [disabled]);
 
     useEffect(() => {
         if (isOpen) {
@@ -232,12 +237,12 @@ const CustomDatePicker = ({ selectedDate, onChange, label, placeholder = "Select
             {label && <label className="text-[10px] font-black text-muted uppercase tracking-widest mb-1.5 block">{label}</label>}
 
             <div
-                onClick={() => setIsOpen(!isOpen)}
-                className={`flex items-center gap-2 w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-2.5 cursor-pointer transition-all hover:border-accent group ${isOpen ? 'ring-2 ring-accent/20 border-accent shadow-[0_0_30px_rgba(200,169,106,0.15)] bg-white/[0.05]' : ''}`}
+                onClick={() => { if (!disabled) setIsOpen(!isOpen); }}
+                className={`flex items-center gap-2 w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-2.5 transition-all group ${disabled ? 'opacity-60 cursor-not-allowed' : `cursor-pointer hover:border-accent ${isOpen ? 'ring-2 ring-accent/20 border-accent shadow-[0_0_30px_rgba(200,169,106,0.15)] bg-white/[0.05]' : ''}`}`}
             >
                 <CalendarIcon size={14} className={`transition-colors ${isOpen ? 'text-accent' : 'text-secondary group-hover:text-accent'}`} />
                 <span className={`text-sm font-bold ${selectedDate ? 'text-white' : 'text-muted'}`}>
-                    {selectedDate ? parseLocalDate(selectedDate).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : placeholder}
+                    {selectedDate ? formatDateDisplayDMY(selectedDate) : placeholder}
                 </span>
             </div>
 

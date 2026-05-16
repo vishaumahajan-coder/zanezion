@@ -4,13 +4,37 @@ import Table from '../../components/Table';
 import KpiCard from '../../components/KpiCard';
 import Modal from '../../components/Modal';
 import { useData } from '../../context/GlobalDataContext';
-import { Package, AlertTriangle, ArrowUp, Plus, MapPin, Box, Warehouse, ClipboardCheck, History, DollarSign, Calendar, ClipboardList } from 'lucide-react';
+import { Package, AlertTriangle, ArrowUp, Plus, MapPin, Box, Warehouse, ClipboardCheck, History, DollarSign, Calendar, ClipboardList, Image as ImageIcon } from 'lucide-react';
 import CustomDatePicker from '../../components/CustomDatePicker';
 import StatusBadge from '../../components/StatusBadge';
-import { CLIENTS as CLIENTS_SEED } from '../../utils/data';
+import { CLIENTS as CLIENTS_SEED, marketplaceCategorySelectOptions, normalizeToMarketplaceCategory, canonicalMarketplaceCategory } from '../../utils/data';
+import { useLocation } from 'react-router-dom';
+import { toAbsoluteImageUrl } from '../../utils/api';
+
+/** Normalize for enum match (handles spaces / casing). */
+function normClientEnum(v) {
+  return String(v ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
+/** Client-owner dropdown: only rows classified as Business (not SaaS / personal / website). */
+function isBusinessPortfolioClient(c) {
+  const ct = normClientEnum(c?.client_type ?? c?.clientType ?? c?.client_kind ?? c?.clientKind);
+  const tt = normClientEnum(c?.tenant_type ?? c?.tenantType);
+  return ct === 'business' || tt === 'business';
+}
+
+function isSaaSPortfolioClient(c) {
+  const ct = normClientEnum(c?.client_type ?? c?.clientType ?? c?.client_kind ?? c?.clientKind);
+  const tt = normClientEnum(c?.tenant_type ?? c?.tenantType);
+  return ct === 'saas' || tt === 'saas' || c?.source === 'Subscriber';
+}
 
 const Inventory = () => {
-  const { inventory, addInventory, updateInventory, deleteInventory, users, currentUser, vendors, stockMovements, addStockEntry, issueStock, projects, purchaseRequests, addPurchaseRequest, updateProject, recordLoss, clients, fetchInventory, fetchClients, fetchVendors, hasMenuPermission, warehouses, fetchWarehouses, fetchPurchaseRequests } = useData();
+  const location = useLocation();
+  const { inventory, addInventory, updateInventory, deleteInventory, users, currentUser, marketplaceVendors = [], stockMovements, addStockEntry, issueStock, projects, purchaseRequests, addPurchaseRequest, updateProject, recordLoss, clients, fetchInventory, fetchClients, fetchVendors, hasMenuPermission, warehouses, fetchWarehouses, fetchPurchaseRequests } = useData();
 
   React.useEffect(() => {
     fetchInventory();
@@ -19,9 +43,13 @@ const Inventory = () => {
     fetchWarehouses();
     fetchPurchaseRequests();
   }, [fetchInventory, fetchClients, fetchVendors, fetchWarehouses, fetchPurchaseRequests]);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [modalType, setModalType] = useState('view'); // view, entry, issue, loss
   const [selectedItem, setSelectedItem] = useState(null);
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const [formData, setFormData] = useState({
     item: '',
     qty: 0,
@@ -34,19 +62,54 @@ const Inventory = () => {
     issuedBy: currentUser?.name || '',
     reason: '',
     inventoryType: 'Marketplace',
+    inventorySegment: 'Business',
     clientId: ''
   });
   const userRoleNorm = (currentUser?.role || '').toLowerCase().replace(/[\s_]+/g, '');
-  const [activeTab, setActiveTab] = useState(['superadmin', 'admin', 'inventory', 'inventorymanager', 'procurement', 'operations'].includes(userRoleNorm) ? 'Marketplace' : 'Client');
+  const [activeTab, setActiveTab] = useState(['superadmin', 'admin', 'inventory', 'inventorymanager', 'procurement', 'operations'].includes(userRoleNorm) ? 'Marketplace' : 'Business');
+
+  /** When stock entry name matches an existing SKU, keep category dropdown aligned with that row */
+  const entryCategorySyncKeyRef = React.useRef('');
+  React.useEffect(() => {
+    if (modalType !== 'entry' || !isModalOpen) {
+      entryCategorySyncKeyRef.current = '';
+      return;
+    }
+    const name = String(formData.item || '').trim();
+    const existing = name ? inventory.find((i) => i.name === name) : null;
+    const key = existing ? `${existing.id}:${name}` : '';
+    if (existing && entryCategorySyncKeyRef.current !== key) {
+      entryCategorySyncKeyRef.current = key;
+      const cat = canonicalMarketplaceCategory(existing.category);
+      setFormData((fd) => ({ ...fd, category: cat }));
+    }
+    if (!existing) entryCategorySyncKeyRef.current = '';
+  }, [formData.item, inventory, modalType, isModalOpen]);
 
   /** API sometimes returns []; keep seed clients so "Client owner" dropdown always has options in dev. */
   const clientListForSelect = useMemo(() => {
     const list = Array.isArray(clients) && clients.length > 0 ? clients : CLIENTS_SEED;
     return list.map((c) => ({
       ...c,
+      id: c.id ?? c.client_id ?? c.clientId,
       companyName: c.business_name || c.companyName || c.name,
     }));
   }, [clients]);
+
+  const businessClientsForInventorySelect = useMemo(
+    () =>
+      clientListForSelect.filter(
+        (c) => isBusinessPortfolioClient(c) && c.id != null && String(c.id).trim() !== '',
+      ),
+    [clientListForSelect],
+  );
+  const saasClientsForInventorySelect = useMemo(
+    () =>
+      clientListForSelect.filter(
+        (c) => isSaaSPortfolioClient(c) && c.id != null && String(c.id).trim() !== '',
+      ),
+    [clientListForSelect],
+  );
 
   const isAdmin = ['superadmin', 'admin', 'client', 'inventory', 'inventorymanager', 'procurement', 'operations', 'concierge', 'conciergemanager'].includes(userRoleNorm);
 
@@ -67,9 +130,27 @@ const Inventory = () => {
         i.issuedTo === currentUser?.name
       );
     }
-    const typeMatch = (i.inventoryType || 'Marketplace') === activeTab;
-    return typeMatch;
+    if (activeTab === 'Marketplace') return (i.inventoryType || 'Marketplace') === 'Marketplace';
+    const owner = clientListForSelect.find((c) => String(c.id) === String(i.clientId));
+    if (activeTab === 'Business') return (i.inventoryType || 'Marketplace') === 'Client' && isBusinessPortfolioClient(owner);
+    if (activeTab === 'SaaS') return (i.inventoryType || 'Marketplace') === 'Client' && isSaaSPortfolioClient(owner);
+    return false;
   });
+
+  React.useEffect(() => {
+    const q = new URLSearchParams(location.search);
+    if (q.get('action') !== 'entry') return;
+    const mode = q.get('type');
+    const isSaaS = mode === 'SaaS';
+    const isBusiness = mode === 'Business';
+    handleAction('entry', {});
+    setFormData((fd) => ({
+      ...fd,
+      inventoryType: isSaaS || isBusiness ? 'Client' : 'Marketplace',
+      inventorySegment: isSaaS ? 'SaaS' : 'Business',
+      clientId: '',
+    }));
+  }, [location.search]);
 
   const totalStockValue = displayedInventory.reduce((acc, i) => acc + (parseFloat(i.price || 0) * parseInt(i.qty || 0)), 0);
   const lowStockItems = displayedInventory.filter(i => i.status === 'Critical' || i.status === 'Warning');
@@ -80,6 +161,9 @@ const Inventory = () => {
     if (!isAdmin && type !== 'view') return;
     setSelectedItem(item);
     setModalType(type);
+    setImageFile(null);
+    const imgPath = item?.image || item?.image_url || item?.imageUrl || null;
+    setImagePreview(toAbsoluteImageUrl(imgPath));
     if (type === 'entry') {
       if (prContext) {
         setFormData({
@@ -88,11 +172,14 @@ const Inventory = () => {
           price: prContext.price || (prContext.items && prContext.items[0]?.price) || '',
           warehouse: (warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage',
           warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
-          category: prContext.category || 'General',
+          category: normalizeToMarketplaceCategory(prContext.category || 'General'),
           vendor: prContext.vendor || '',
+          vendorId: prContext.vendor_id ?? prContext.vendorId ?? null,
+          vendor_id: prContext.vendor_id ?? prContext.vendorId ?? null,
           issuedBy: currentUser?.name || '',
           prRef: prContext.id,
           inventoryType: 'Marketplace',
+          inventorySegment: 'Business',
           clientId: ''
         });
       } else {
@@ -102,20 +189,28 @@ const Inventory = () => {
           price: '',
           warehouse: (warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage',
           warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
-          category: 'General',
+          category: normalizeToMarketplaceCategory('General'),
           vendor: '',
+          vendorId: null,
+          vendor_id: null,
           issuedBy: currentUser?.name || '',
           inventoryType: 'Marketplace',
+          inventorySegment: 'Business',
           clientId: ''
         });
       }
     } else if (type === 'issue') {
       const whName = item?.location || ((warehouses && warehouses.length > 0) ? warehouses[0].name : 'General Storage');
       const wh = warehouses.find(w => w.name === whName);
+      const matchedClient = clientListForSelect.find((c) =>
+        String(c.id) === String(item?.clientId || item?.client_id || '') ||
+        String(c.companyName || c.business_name || c.name || '').toLowerCase() === String(item?.client || '').toLowerCase()
+      );
       setFormData({
         item: item?.name || '',
         qty: item?.qty || '',
-        client: item?.client || '',
+        client: matchedClient?.companyName || matchedClient?.business_name || matchedClient?.name || item?.client || '',
+        clientId: matchedClient?.id || item?.clientId || item?.client_id || '',
         warehouse: whName,
         warehouseId: wh ? wh.id : (item?.warehouse_id || null),
         issuedBy: currentUser?.name || '',
@@ -138,40 +233,83 @@ const Inventory = () => {
       const wh = warehouses.find(w => w.name === whName);
       setFormData({
         ...item,
+        category: normalizeToMarketplaceCategory(item?.category),
         warehouse: whName,
-        warehouseId: wh ? wh.id : (item?.warehouse_id || null)
+        warehouseId: wh ? wh.id : (item?.warehouse_id || null),
+        size: item?.size || '',
+        color: item?.color || '',
+        material: item?.material || '',
+        specifications: item?.specifications || '',
+        description: item?.description || ''
       });
     }
     setIsModalOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
     try {
       if (modalType === 'entry') {
-        addStockEntry(formData);
+        if ((formData.inventoryType || 'Marketplace') === 'Client' && !String(formData.clientId || '').trim()) {
+          swalWarning('Client owner required', 'Please select the inventory owner before saving.');
+          setIsSaving(false);
+          return;
+        }
+        const wid = formData.warehouseId ?? formData.warehouse_id;
+        if (wid == null || String(wid).trim() === '' || Number.isNaN(Number(wid)) || Number(wid) < 1) {
+          swalWarning('Warehouse required', 'Choose a warehouse from the list so the item is stored under a valid bin. Empty warehouse IDs cause the server to reject the save.');
+          setIsSaving(false);
+          return;
+        }
+          const res = await addStockEntry({ ...formData, imageFile });
+          if (!res?.ok) {
+            swalError('Save failed', res?.error || 'Stock entry could not be saved.');
+            return;
+          }
       } else if (modalType === 'issue') {
-        issueStock(formData);
+        if (!String(formData.clientId || '').trim()) {
+          swalWarning('Select customer', 'Please select a customer from the search list so stock issue links to customer ID.');
+          setIsSaving(false);
+          return;
+        }
+        await issueStock(formData);
         if (formData.projectRef) {
           const targetProject = projects.find(p => p.id === formData.projectRef);
           if (targetProject) {
-            updateProject({ ...targetProject, fulfilled: true, status: 'Fulfilled' });
+            await updateProject({ ...targetProject, fulfilled: true, status: 'Fulfilled' });
           }
         }
       } else if (modalType === 'loss') {
-        recordLoss(formData);
+        await recordLoss(formData);
       } else if (modalType === 'edit') {
-        updateInventory(formData);
+        await updateInventory({ ...formData, imageFile });
       } else if (modalType === 'delete') {
-        deleteInventory(selectedItem.id);
+        await deleteInventory(selectedItem.id);
       }
       setIsModalOpen(false);
     } catch (err) {
       console.error('Error during handleSave:', err);
       swalError('Error', 'Verification failed.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const columns = [
+    {
+      header: "Photo",
+      accessor: "image",
+      render: (item) => (
+        <div className="w-10 h-10 rounded-lg overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center">
+          {item.image ? (
+            <img src={toAbsoluteImageUrl(item.image)} alt="" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = ''; e.currentTarget.parentElement.innerHTML = '<div class="text-muted"><Package size={16}/></div>'; }} />
+          ) : (
+            <ImageIcon size={16} className="text-muted/40" />
+          )}
+        </div>
+      )
+    },
     { header: "Product Name", accessor: "name" },
     { header: "Category", accessor: "category" },
     { header: "Qty", accessor: "qty" },
@@ -186,7 +324,7 @@ const Inventory = () => {
       render: (item) => `$${(parseFloat(item.price || 0) * parseInt(item.qty || 0)).toLocaleString()}`
     },
     { header: "Warehouse", accessor: "location" },
-    ...(isAdmin && activeTab === 'Client' ? [{
+    ...(isAdmin && ['Business', 'SaaS'].includes(activeTab) ? [{
       header: "Client",
       accessor: "clientName",
       render: (item) => item.clientName || '—'
@@ -245,7 +383,7 @@ const Inventory = () => {
               <h3 className="text-sm font-bold text-white uppercase tracking-widest">Warehouse Ledger</h3>
               {isAdmin && (
                 <div className="flex bg-black/40 rounded-xl p-1 border border-white/5 w-full sm:w-auto overflow-x-auto whitespace-nowrap hide-scrollbar">
-                  {['Marketplace', 'Client'].map((tab) => (
+                  {['Marketplace', 'Business', 'SaaS'].map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setActiveTab(tab)}
@@ -475,6 +613,7 @@ const Inventory = () => {
                                 addPurchaseRequest({
                                   items: [item],
                                   requester: currentUser?.name || 'System Auditor',
+                                  requester_id: currentUser?.id,
                                   priority: 'High',
                                   status: 'Pending',
                                   orderRef: prj.orderRef
@@ -597,7 +736,7 @@ const Inventory = () => {
                       name="inventoryType"
                       value="Marketplace"
                       checked={formData.inventoryType === 'Marketplace'}
-                      onChange={(e) => setFormData({ ...formData, inventoryType: 'Marketplace', clientId: '' })}
+                      onChange={(e) => setFormData({ ...formData, inventoryType: 'Marketplace', inventorySegment: 'Business', clientId: '' })}
                       className="accent-accent"
                     />
                     Marketplace Inventory
@@ -606,12 +745,23 @@ const Inventory = () => {
                     <input
                       type="radio"
                       name="inventoryType"
-                      value="Client"
-                      checked={formData.inventoryType === 'Client'}
-                      onChange={(e) => setFormData({ ...formData, inventoryType: 'Client' })}
+                      value="Business"
+                      checked={formData.inventoryType === 'Client' && formData.inventorySegment !== 'SaaS'}
+                      onChange={(e) => setFormData({ ...formData, inventoryType: 'Client', inventorySegment: 'Business' })}
                       className="accent-accent"
                     />
-                    Client Inventory
+                    Business Inventory
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-white cursor-pointer">
+                    <input
+                      type="radio"
+                      name="inventoryType"
+                      value="SaaS"
+                      checked={formData.inventoryType === 'Client' && formData.inventorySegment === 'SaaS'}
+                      onChange={(e) => setFormData({ ...formData, inventoryType: 'Client', inventorySegment: 'SaaS' })}
+                      className="accent-accent"
+                    />
+                    SaaS Inventory
                   </label>
                 </div>
               </div>
@@ -625,7 +775,7 @@ const Inventory = () => {
                     className="w-full bg-background border border-accent/20 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white shadow-lg shadow-accent/5"
                   >
                     <option value="">Select Client...</option>
-                    {clientListForSelect.map(c => (
+                    {(formData.inventorySegment === 'SaaS' ? saasClientsForInventorySelect : businessClientsForInventorySelect).map(c => (
                       <option key={String(c.id)} value={c.id}>{c.companyName || c.business_name || c.name}</option>
                     ))}
                   </select>
@@ -645,15 +795,16 @@ const Inventory = () => {
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-muted uppercase tracking-widest">Category</label>
                 <select
-                  value={formData.category}
+                  value={(() => {
+                    const v = String(formData.category ?? '').trim() || 'General';
+                    return marketplaceCategorySelectOptions(formData.category).includes(v) ? v : 'General';
+                  })()}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                   className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
                 >
-                  <option>General</option>
-                  <option>Beverage</option>
-                  <option>Marine Supply</option>
-                  <option>Provisions</option>
-                  <option>Housekeeping</option>
+                  {marketplaceCategorySelectOptions(formData.category).map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
                 </select>
               </div>
               <div className="space-y-1">
@@ -666,14 +817,75 @@ const Inventory = () => {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Unit Price ($)</label>
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Price ($)</label>
                 <input
                   type="number"
                   value={formData.price}
                   onChange={(e) => setFormData({ ...formData, price: e.target.value })}
                   className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                  placeholder="0.00"
                 />
               </div>
+
+              {/* Product Details Section */}
+              <div className="col-span-1 md:col-span-2 border-t border-white/10 pt-4 mt-2">
+                <h4 className="text-[10px] font-black text-accent uppercase tracking-widest mb-4">Product Specifications</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest">Size</label>
+                    <input
+                      type="text"
+                      value={formData.size}
+                      onChange={(e) => setFormData({ ...formData, size: e.target.value })}
+                      className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                      placeholder="e.g. 10ft, Large, 42"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest">Color</label>
+                    <input
+                      type="text"
+                      value={formData.color}
+                      onChange={(e) => setFormData({ ...formData, color: e.target.value })}
+                      className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                      placeholder="e.g. Black, Silver, Matte"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest">Material</label>
+                    <input
+                      type="text"
+                      value={formData.material}
+                      onChange={(e) => setFormData({ ...formData, material: e.target.value })}
+                      className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                      placeholder="e.g. Steel, Silk, Leather"
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest">Specification (Summary)</label>
+                    <input
+                      type="text"
+                      value={formData.specifications}
+                      onChange={(e) => setFormData({ ...formData, specifications: e.target.value })}
+                      className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                      placeholder="e.g. Heavy Duty, UV Protected..."
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-muted uppercase tracking-widest">Small Description</label>
+                    <textarea
+                      value={formData.description}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      rows={3}
+                      className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                      placeholder="Enter a brief product overview..."
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-muted uppercase tracking-widest">Stock Entry Date</label>
                 <input
@@ -711,25 +923,75 @@ const Inventory = () => {
                 <label className="text-[10px] font-black text-muted uppercase tracking-widest">Vendor source</label>
                 <select
                   value={formData.vendor}
-                  onChange={(e) => setFormData({ ...formData, vendor: e.target.value })}
+                  onChange={(e) => {
+                    const name = e.target.value;
+                    const v = marketplaceVendors.find((x) => x.name === name);
+                    setFormData({
+                      ...formData,
+                      vendor: name,
+                      vendorId: v?.id ?? null,
+                      vendor_id: v?.id ?? null,
+                    });
+                  }}
                   className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
                 >
                   <option value="">Select Vendor...</option>
-                  {vendors.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
+                  {marketplaceVendors.map(v => <option key={v.id} value={v.name}>{v.name}</option>)}
                 </select>
+              </div>
+              <div className="space-y-1 col-span-1 md:col-span-2">
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Product Photo</label>
+                <div className="space-y-3">
+                  {imagePreview && (
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={imagePreview}
+                        alt="Preview"
+                        className="w-16 h-16 rounded-xl object-cover border border-white/10 bg-white/5"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                      <div className="text-[9px] text-muted font-bold uppercase tracking-widest">Preview</div>
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      setImageFile(file);
+                      if (file) setImagePreview(URL.createObjectURL(file));
+                    }}
+                    className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
+                  />
+                </div>
               </div>
             </div>
           ) : modalType === 'issue' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Client Name</label>
-                <input
-                  type="text"
-                  value={formData.client}
-                  onChange={(e) => setFormData({ ...formData, client: e.target.value })}
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Customer (dropdown)</label>
+                <select
+                  value={formData.clientId || ''}
+                  onChange={(e) => {
+                    const selectedId = e.target.value;
+                    const selected = clientListForSelect.find((c) => String(c.id) === String(selectedId));
+                    setFormData({
+                      ...formData,
+                      clientId: selectedId,
+                      client: selected ? (selected.companyName || selected.business_name || selected.name || '') : '',
+                    });
+                  }}
                   className="w-full bg-background border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold text-white"
-                  placeholder="Recipient Entity"
-                />
+                >
+                  <option value="">Select customer...</option>
+                  {clientListForSelect.map((c) => {
+                    const label = c.companyName || c.business_name || c.name;
+                    return <option key={String(c.id)} value={c.id}>{label}</option>;
+                  })}
+                </select>
+                {!!formData.clientId && (
+                  <p className="text-[9px] text-success font-black uppercase tracking-widest">Linked Customer ID: {formData.clientId}</p>
+                )}
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-muted uppercase tracking-widest">Item Issued</label>
@@ -854,7 +1116,7 @@ const Inventory = () => {
                       disabled={modalType === 'view'}
                     >
                       <option value="">Select Client...</option>
-                      {clientListForSelect.map(c => (
+                      {businessClientsForInventorySelect.map(c => (
                         <option key={String(c.id)} value={c.id}>{c.companyName || c.business_name || c.name}</option>
                       ))}
                     </select>
@@ -862,13 +1124,20 @@ const Inventory = () => {
                 )}
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Category</label>
-                  <input
-                    type="text"
-                    value={formData.category}
+                  <select
+                    value={(() => {
+                      const opts = marketplaceCategorySelectOptions(formData.category);
+                      const v = String(formData.category ?? '').trim() || 'General';
+                      return opts.includes(v) ? v : 'General';
+                    })()}
                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
                     disabled={modalType === 'view'}
-                  />
+                  >
+                    {marketplaceCategorySelectOptions(formData.category).map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">On-Hand Quantity</label>
@@ -908,13 +1177,23 @@ const Inventory = () => {
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Supply Partner (Vendor)</label>
                   <select
-                    value={formData.vendorName || ''}
-                    onChange={(e) => setFormData({ ...formData, vendorName: e.target.value })}
+                    value={formData.vendorName || formData.vendor || ''}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      const v = marketplaceVendors.find((x) => x.name === name);
+                      setFormData({
+                        ...formData,
+                        vendorName: name,
+                        vendor: name,
+                        vendorId: v?.id ?? null,
+                        vendor_id: v?.id ?? null,
+                      });
+                    }}
                     className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
                     disabled={modalType === 'view'}
                   >
                     <option value="">Select Vendor...</option>
-                    {vendors.map(v => (
+                    {marketplaceVendors.map(v => (
                       <option key={v.id} value={v.name}>{v.name}</option>
                     ))}
                   </select>
@@ -935,15 +1214,53 @@ const Inventory = () => {
                   </select>
                 </div>
                 <div className="col-span-1 sm:col-span-2 space-y-1">
-                  <label className="text-[10px] font-bold text-muted uppercase">Product Image URL (Optional)</label>
-                  <input
-                    type="text"
-                    value={formData.image || ''}
-                    onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                    placeholder="https://example.com/product.jpg"
-                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
-                    disabled={modalType === 'view'}
-                  />
+                  <label className="text-[10px] font-bold text-muted uppercase">Product Photo</label>
+                  <div className="space-y-3">
+                    {imagePreview ? (
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={imagePreview}
+                          alt="Product"
+                          className="w-20 h-20 rounded-xl object-cover border border-white/10 bg-white/5"
+                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                        />
+                        <div className="text-[10px] text-muted font-bold uppercase tracking-widest">
+                          Preview
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-muted italic">No photo set</div>
+                    )}
+
+                    {modalType !== 'view' && (
+                      <div className="flex flex-col gap-2">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] || null;
+                            setImageFile(file);
+                            if (file) setImagePreview(URL.createObjectURL(file));
+                          }}
+                          className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
+                        />
+                        <input
+                          type="text"
+                          value={formData.image || ''}
+                          onChange={(e) => {
+                            setFormData({ ...formData, image: e.target.value });
+                            setImageFile(null);
+                            setImagePreview(e.target.value || null);
+                          }}
+                          placeholder="Or paste an image URL (optional)"
+                          className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none"
+                        />
+                        <p className="text-[9px] text-muted font-bold uppercase tracking-widest">
+                          Upload file recommended. URL works only if backend allows remote images.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Inventory Status</label>
@@ -1025,9 +1342,11 @@ const Inventory = () => {
             {modalType !== 'view' && (
               <button
                 onClick={handleSave}
+                disabled={isSaving}
                 className={`btn-primary ${modalType === 'delete' ? 'bg-danger hover:bg-danger/80 border-danger' : ''}`}
               >
-                {modalType === 'entry' ? 'Verify & Inbound' :
+                {isSaving ? 'Saving...' :
+                modalType === 'entry' ? 'Verify & Inbound' :
                   modalType === 'issue' ? 'Verify & Dispatch' :
                     modalType === 'loss' ? 'Record Asset Loss' :
                       modalType === 'delete' ? 'Confirm Decommission' : 'Commit Stock Data'}

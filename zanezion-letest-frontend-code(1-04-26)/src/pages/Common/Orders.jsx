@@ -9,6 +9,14 @@ import OrderModal from '../../components/OrderModal';
 import InvoiceGenerationModal from '../../components/InvoiceGenerationModal';
 import { normalizeRole, roleCanCreateInstitutionalOrder } from '../../utils/authUtils';
 
+/** Bespoke / concierge-path orders (store custom request or any row with a custom_request_category). */
+function isCustomRequestFlowOrder(row) {
+  const k = String(row?.order_kind || row?.orderKind || '').toLowerCase();
+  if (k === 'custom_request') return true;
+  const cat = row?.custom_request_category ?? row?.customRequestCategory;
+  return cat != null && String(cat).trim() !== '';
+}
+
 const Orders = () => {
   const {
     orders, addOrder, updateOrder, deleteOrder,
@@ -30,7 +38,7 @@ const Orders = () => {
   const normalizedRole = currentUser?.role?.toLowerCase().replace(/\s/g, '');
   const portalRole = normalizeRole(currentUser?.role);
   const canStaffCreateOrder = roleCanCreateInstitutionalOrder(portalRole);
-  const canManageOrders = ['superadmin', 'admin', 'operations', 'client', 'procurement', 'inventory', 'logistics'].includes(normalizedRole);
+  const canManageOrders = ['superadmin', 'admin', 'operations', 'client', 'procurement', 'inventory', 'logistics', 'concierge'].includes(normalizedRole);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('view');
@@ -97,6 +105,19 @@ const Orders = () => {
     setIsModalOpen(false);
   };
 
+  const paymentBadgeForOrder = (orderRow) => {
+    const orderId = String(orderRow?.id ?? '').replace(/\D/g, '');
+    const inv = (invoices || []).find((x) => String(x?.orderId ?? '').replace(/\D/g, '') === orderId);
+    if (!inv) return { label: 'No Invoice', cls: 'bg-muted/20 text-muted' };
+    const st = String(inv.status || '').toLowerCase();
+    const paid = Number(inv.paidAmount || 0);
+    const total = Number(inv.totalAmount || 0);
+    if (st === 'paid' || (total > 0 && paid >= total)) return { label: 'Paid', cls: 'bg-success/20 text-success' };
+    if (st.includes('partial') || (paid > 0 && total > 0 && paid < total)) return { label: 'Partially Paid', cls: 'bg-info/20 text-info' };
+    if (st === 'overdue') return { label: 'Overdue', cls: 'bg-danger/20 text-danger' };
+    return { label: 'Unpaid', cls: 'bg-warning/20 text-warning' };
+  };
+
   const columns = [
     { header: "Order ID", accessor: "id" },
     { header: "Client", accessor: "client" },
@@ -135,10 +156,57 @@ const Orders = () => {
       )
     },
     {
+      header: "Payment",
+      accessor: "id",
+      render: (row) => {
+        const badge = paymentBadgeForOrder(row);
+        return (
+          <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${badge.cls}`}>
+            {badge.label}
+          </span>
+        );
+      }
+    },
+    {
       header: "Delivery",
       accessor: "id",
       render: (row) => {
-        const delivery = deliveries?.find(d => d.orderId === row.id);
+        const orderStatusNorm = String(row?.status || '').toLowerCase();
+        if (['created', 'admin_review', 'pending_review'].includes(orderStatusNorm)) {
+          return (
+            <div className="flex flex-col gap-1">
+              <span className="px-2 py-1 rounded-lg text-[10px] font-bold uppercase bg-warning/20 text-warning">
+                Awaiting Admin Review
+              </span>
+            </div>
+          );
+        }
+        if (orderStatusNorm === 'concierge') {
+          return (
+            <div className="flex flex-col gap-1">
+              <span className="px-2 py-1 rounded-lg text-[10px] font-bold uppercase bg-accent/20 text-accent border border-accent/25">
+                Concierge triage
+              </span>
+            </div>
+          );
+        }
+        if (orderStatusNorm === 'logistics') {
+          return (
+            <div className="flex flex-col gap-1">
+              <span className="px-2 py-1 rounded-lg text-[10px] font-bold uppercase bg-info/20 text-info border border-info/25">
+                With logistics — assign driver in Deliveries
+              </span>
+            </div>
+          );
+        }
+        const rowOrderNum = Number(String(row?.id ?? '').replace(/\D/g, '')) || null;
+        const delivery = (deliveries || []).find((d) => {
+          const deliveryOrderNum =
+            Number(d?.order_id_raw) ||
+            Number(String(d?.orderId ?? '').replace(/\D/g, '')) ||
+            null;
+          return rowOrderNum != null && deliveryOrderNum != null && rowOrderNum === deliveryOrderNum;
+        });
         return (
           <div className="flex flex-col gap-1">
             <span className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase ${delivery?.status === 'Completed' || delivery?.status === 'Delivered' ? 'bg-success/20 text-success' :
@@ -231,7 +299,9 @@ const Orders = () => {
                           orderId: orderRef,
                           items: item.items,
                           client: item.client,
-                          location: item.location || item.pickupLocation
+                          location: item.location || item.delivery_address || item.pickupLocation,
+                          deliveryInstructions: item.delivery_instructions || item.deliveryInstructions || '',
+                          deliveryFee: item.total ?? item.total_amount ?? item.amount,
                         }
                       });
                     }}
@@ -241,16 +311,52 @@ const Orders = () => {
                     <Truck size={14} /> Delivery
                   </button>
                 )}
-                {/* Admin Approval: created -> operation */}
-                {['superadmin', 'client', 'admin'].includes(normalizedRole) && 
+                {/* Admin approval: marketplace → logistics queue (whole team sees it; assign driver in Deliveries); bespoke → concierge */}
+                {['superadmin', 'client', 'admin'].includes(normalizedRole) &&
                  ['created', 'admin_review', 'pending_review'].includes(String(item.status).toLowerCase()) && (
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleApprove(item, 'operation'); }}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleApprove(item, isCustomRequestFlowOrder(item) ? 'concierge' : 'logistics');
+                    }}
                     className="p-2 rounded-lg text-secondary hover:text-success hover:bg-success/10 transition-all flex items-center justify-center font-bold text-[10px] gap-2"
-                    title="Approve & Send to Operation"
+                    title={isCustomRequestFlowOrder(item) ? 'Approve & send to Concierge' : 'Approve & send to Logistics (dispatch queue)'}
                   >
-                    <CheckCircle size={14} /> <span>Approve</span>
+                    <CheckCircle size={14} />{' '}
+                    <span>{isCustomRequestFlowOrder(item) ? 'Approve → Concierge' : 'Approve → Logistics'}</span>
                   </button>
+                )}
+
+                {/* Concierge triage: forward into supply chain */}
+                {['superadmin', 'concierge', 'admin'].includes(normalizedRole) &&
+                 String(item.status).toLowerCase() === 'concierge' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleApprove(item, 'operation'); }}
+                      className="p-1 px-2 rounded-lg text-secondary hover:text-info hover:bg-info/10 transition-all flex items-center justify-center font-bold text-[9px] gap-1.5 border border-white/5"
+                      title="Hand off to Operations"
+                    >
+                      <ArrowRightCircle size={13} /> <span>To Operations</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleApprove(item, 'procurement'); }}
+                      className="p-1 px-2 rounded-lg text-secondary hover:text-warning hover:bg-warning/10 transition-all flex items-center justify-center font-bold text-[9px] gap-1.5 border border-white/5"
+                      title="Needs procurement / sourcing"
+                    >
+                      <ShoppingCart size={13} /> <span>To Procurement</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleApprove(item, 'logistics'); }}
+                      className="p-1 px-2 rounded-lg text-secondary hover:text-accent hover:bg-accent/10 transition-all flex items-center justify-center font-bold text-[9px] gap-1.5 border border-accent/20"
+                      title="Straight to dispatch when fulfilment is logistics-only"
+                    >
+                      <Truck size={13} /> <span>To Dispatch</span>
+                    </button>
+                  </>
                 )}
 
                 {/* Operations Actions: operation -> procurement OR inventory OR logistics */}

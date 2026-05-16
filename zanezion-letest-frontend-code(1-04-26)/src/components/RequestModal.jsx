@@ -6,14 +6,15 @@ import { useData } from '../context/GlobalDataContext';
 import { formatDateTimeEst } from '../utils/dateEst';
 
 const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'add' }) => {
-  const { currentUser } = useData();
+  const { currentUser, users = [], customerUsers = [], clients = [] } = useData();
   const userRole = (currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
-  const isAdmin = ['admin', 'super_admin', 'procurement'].includes(userRole);
+  const isAdmin = ['admin', 'super_admin', 'procurement', 'operations'].includes(userRole);
 
   const [formData, setFormData] = useState({
     requestId: 'REQ-' + Math.floor(100 + Math.random() * 900),
     items: [{ name: '', qty: 1, price: 0 }],
     requester: '',
+    requester_id: null,
     requestDate: new Date().toISOString().split('T')[0],
     todayDate: new Date().toISOString().split('T')[0],
     timestamp: new Date().toLocaleTimeString(),
@@ -22,6 +23,9 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
     connectedEntity: '',
     requestType: 'Individual' // 'Individual' or 'Company'
   });
+
+  const [userSearch, setUserSearch] = useState('');
+  const [showUserSuggestions, setShowUserSuggestions] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -39,19 +43,24 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
           requestId: selectedRequest.id || ('REQ-' + Math.floor(100 + Math.random() * 900)),
           items: normalizedItems,
           requester: selectedRequest.requester || '',
+          requester_id: selectedRequest.requester_id || null,
           requestDate: selectedRequest.date || new Date().toISOString().split('T')[0],
-          todayDate: selectedRequest.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0],
-          timestamp: selectedRequest.createdAt?.split('T')[1]?.split('.')[0] || new Date().toLocaleTimeString(),
+          todayDate: selectedRequest.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+          timestamp: selectedRequest.created_at?.split('T')[1]?.split('.')[0] || new Date().toLocaleTimeString(),
           status: selectedRequest.status || 'Pending',
           department: selectedRequest.department || 'Operations',
           connectedEntity: selectedRequest.connectedEntity || '',
           requestType: selectedRequest.requestType || 'Individual'
         });
+        setUserSearch(selectedRequest.requester || '');
       } else {
+        const initialRequester = isAdmin ? '' : (currentUser?.name || '');
+        const initialRequesterId = isAdmin ? null : (currentUser?.id || null);
         setFormData({
           requestId: 'REQ-' + Math.floor(100 + Math.random() * 900),
           items: [{ name: '', qty: 1, price: 0 }],
-          requester: '',
+          requester: initialRequester,
+          requester_id: initialRequesterId,
           requestDate: new Date().toISOString().split('T')[0],
           todayDate: new Date().toISOString().split('T')[0],
           timestamp: new Date().toLocaleTimeString(),
@@ -60,9 +69,46 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
           connectedEntity: '',
           requestType: 'Individual'
         });
+        setUserSearch(initialRequester);
       }
     }
-  }, [isOpen, selectedRequest, modalType]);
+  }, [isOpen, selectedRequest, modalType, isAdmin, currentUser]);
+
+  const allUsers = [...users, ...customerUsers];
+  const filteredUsers = allUsers.filter(u => {
+    // 1. Basic search match (show all if userSearch is empty)
+    const matchesSearch = !userSearch || 
+                         u.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
+                         u.email?.toLowerCase().includes(userSearch.toLowerCase());
+    if (!matchesSearch) return false;
+
+    // 2. Role-based filtering (STRICT: ONLY Customers/Clients who have access)
+    const role = (u.role || '').toLowerCase();
+    
+    // Exclude internal staff/admin per user request
+    if (['super_admin', 'admin', 'procurement', 'operations', 'staff', 'inventory', 'concierge', 'logistics'].includes(role)) {
+      return false; 
+    }
+
+    if (role === 'customer' || role === 'client') {
+      const client = clients.find(c => c.id === u.company_id || c.id === u.clientId);
+      if (!client) return false;
+
+      const clientType = client.client_type || 'Individual';
+      const isPremium = client.plan?.toLowerCase().includes('premium') || client.is_upgraded;
+
+      // Show ONLY Companies or Upgraded Individuals
+      return clientType === 'Company' || (clientType === 'Individual' && isPremium);
+    }
+
+    return false;
+  }).slice(0, 5);
+
+  const handleSelectUser = (user) => {
+    setFormData({ ...formData, requester: user.name, requester_id: user.id });
+    setUserSearch(user.name);
+    setShowUserSuggestions(false);
+  };
 
   const handleAddItem = () => {
     setFormData({ ...formData, items: [...formData.items, { name: '', qty: 1, price: 0 }] });
@@ -99,7 +145,7 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={modalType === 'add' ? "New Purchase Request" : modalType === 'edit' ? `Edit Request: ${formData.requestId}` : `Purchase Request Transcript: ${formData.requestId}`}
+      title={modalType === 'add' ? "New Strategic Purchase Request" : modalType === 'edit' ? `Edit Strategic Request: ${formData.requestId}` : `Purchase Request Transcript: ${formData.requestId}`}
     >
       <form className="space-y-6" onSubmit={handleSubmit}>
         {isView && (
@@ -110,32 +156,70 @@ const RequestModal = ({ isOpen, onClose, onSave, selectedRequest, modalType = 'a
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-muted uppercase">Requester Profile</label>
+          <div className="space-y-1 relative">
+            <label className="text-[10px] font-bold text-muted uppercase tracking-widest">Requester Account Linking</label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
               <input
                 type="text"
-                value={formData.requester}
-                onChange={(e) => setFormData({ ...formData, requester: e.target.value })}
-                placeholder="Name or Department ID"
-                className="w-full bg-background border border-border rounded-lg py-2 pl-10 pr-4 text-sm focus:border-accent outline-none font-bold disabled:opacity-50"
-                disabled={isView}
+                value={userSearch}
+                onChange={(e) => {
+                  setUserSearch(e.target.value);
+                  setShowUserSuggestions(true);
+                  if (isAdmin) setFormData(prev => ({ ...prev, requester: e.target.value, requester_id: null }));
+                }}
+                onFocus={() => isAdmin && setShowUserSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowUserSuggestions(false), 200)}
+                placeholder="Search user name (e.g. 'He' for 'Hello')..."
+                className="w-full bg-background border border-border rounded-lg py-2.5 pl-10 pr-4 text-sm focus:border-accent outline-none font-bold disabled:opacity-70"
+                disabled={isView || !isAdmin}
                 required
               />
             </div>
+            {showUserSuggestions && isAdmin && (
+              <div className="absolute z-[200] left-0 right-0 mt-1 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] overflow-hidden max-h-60 overflow-y-auto backdrop-blur-xl">
+                {filteredUsers.length > 0 ? (
+                  filteredUsers.map(u => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handleSelectUser(u);
+                      }}
+                      className="w-full px-4 py-3 text-left text-[11px] font-bold hover:bg-accent hover:text-black transition-all flex items-center justify-between border-b border-white/5 last:border-0 group"
+                    >
+                      <div className="flex flex-col">
+                        <span className="text-white group-hover:text-black transition-colors">{u.name}</span>
+                        <span className="text-[9px] opacity-40 group-hover:opacity-60 transition-opacity uppercase">{u.email}</span>
+                      </div>
+                      <span className="text-[9px] px-2 py-0.5 bg-white/5 rounded-full opacity-60 group-hover:bg-black/10 transition-all uppercase">{u.role}</span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-4 py-6 text-center text-[10px] font-bold text-muted uppercase tracking-widest italic">
+                    No eligible accounts found
+                  </div>
+                )}
+              </div>
+            )}
+            {formData.requester_id && (
+              <p className="text-[9px] text-green-400 font-bold uppercase mt-1 flex items-center gap-1">
+                <CheckCircle size={10} /> Account Linked: #{formData.requester_id}
+              </p>
+            )}
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-muted uppercase">Asset Manifest</label>
+            <label className="text-[10px] font-bold text-muted uppercase tracking-widest">Asset Manifest</label>
             <div className="relative">
               <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={16} />
               <input
                 type="text"
-                value={formData.items.length === 1 ? formData.items[0].name : `${formData.items.length} Multiple Assets`}
+                value={formData.items.length === 1 ? (formData.items[0].name || 'New Procurement') : `${formData.items.length} Multiple Assets`}
                 readOnly
                 placeholder="Items specified below"
-                className="w-full bg-background border border-border rounded-lg py-2 pl-10 pr-4 text-sm focus:border-accent outline-none font-bold opacity-70"
+                className="w-full bg-background border border-border rounded-lg py-2.5 pl-10 pr-4 text-sm focus:border-accent outline-none font-bold opacity-70 italic"
               />
             </div>
           </div>

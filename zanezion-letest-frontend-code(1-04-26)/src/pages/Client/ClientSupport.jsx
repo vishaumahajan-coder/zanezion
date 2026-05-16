@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
     MessageSquare, Phone, Mail, ChevronRight, User, LifeBuoy,
     Clock, ShieldCheck, Plus, Send, X, AlertCircle, CheckCircle2,
-    Paperclip, ArrowLeft
+    Paperclip, ArrowLeft, Smartphone, FileText, Truck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useData } from '../../context/GlobalDataContext';
@@ -29,7 +29,12 @@ const ClientSupport = () => {
         subject: '',
         category: 'General',
         priority: 'Medium',
-        message: ''
+        message: '',
+        attachments: {
+            screenshot: null,
+            evidence: null,
+            deliveryProof: null
+        }
     });
 
     const roleKey = normalizeRole(currentUser?.role);
@@ -94,11 +99,22 @@ const ClientSupport = () => {
             priority: newTicket.priority,
             status: 'Open',
             date: new Date().toISOString().split('T')[0],
-            messages: [{ sender: 'client', text: newTicket.message, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]
+            messages: [{ 
+                sender: 'client', 
+                text: newTicket.message, 
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                attachments: newTicket.attachments 
+            }]
         };
         if (addSupportTicket) addSupportTicket(ticket);
         else updateSupportTicket && updateSupportTicket(ticket);
-        setNewTicket({ subject: '', category: 'General', priority: 'Medium', message: '' });
+        setNewTicket({ 
+            subject: '', 
+            category: 'General', 
+            priority: 'Medium', 
+            message: '', 
+            attachments: { screenshot: null, evidence: null, deliveryProof: null } 
+        });
         setActiveView('list');
     };
 
@@ -182,6 +198,14 @@ const ClientSupport = () => {
                                             <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase border ${priorityColors[ticket.priority] || 'bg-white/10 text-muted border-white/10'}`}>
                                                 {ticket.priority}
                                             </span>
+                                            {ticket.dispute_status && ticket.dispute_status !== 'none' && (
+                                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                                                    ticket.dispute_status === 'accepted' ? 'bg-success/20 text-success' :
+                                                    ticket.dispute_status === 'rejected' ? 'bg-danger/20 text-danger' : 'bg-warning/20 text-warning'
+                                                }`}>
+                                                    Dispute: {ticket.dispute_status}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                     <div className="flex items-center justify-between">
@@ -243,6 +267,21 @@ const ClientSupport = () => {
                                         {selectedTicket.status}
                                     </span>
                                     <span className="text-[9px] font-black text-muted uppercase tracking-widest">{selectedTicket.category}</span>
+                                    {selectedTicket.dispute_status && selectedTicket.dispute_status !== 'none' && (
+                                        <div className="flex items-center gap-2">
+                                            <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase ${
+                                                selectedTicket.dispute_status === 'accepted' ? 'bg-success/20 text-success' :
+                                                selectedTicket.dispute_status === 'rejected' ? 'bg-danger/20 text-danger' : 'bg-warning/20 text-warning'
+                                            }`}>
+                                                Dispute: {selectedTicket.dispute_status}
+                                            </span>
+                                            {selectedTicket.dispute_status === 'accepted' && (
+                                                <span className="px-2.5 py-1 bg-accent/20 text-accent rounded-full text-[9px] font-black uppercase">
+                                                    Refunded: ${selectedTicket.refund_amount}
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                                 <span className="text-[9px] text-muted">{selectedTicket.date}</span>
                             </div>
@@ -265,6 +304,19 @@ const ClientSupport = () => {
                                             </span>
                                         </div>
                                         <p className="text-sm leading-relaxed">{msg.text}</p>
+                                        {msg.attachments && Object.values(msg.attachments).some(a => a) && (
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                                {Object.entries(msg.attachments).map(([type, url]) => url && (
+                                                    <div key={type} className="group/file relative">
+                                                        <div className="px-3 py-2 bg-white/5 border border-white/10 rounded-xl flex items-center gap-2">
+                                                            <Paperclip size={10} className="text-accent" />
+                                                            <span className="text-[8px] font-black uppercase tracking-widest">{type}</span>
+                                                        </div>
+                                                        <a href={url} target="_blank" rel="noopener noreferrer" className="absolute inset-0 opacity-0 cursor-pointer" />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                         <p className="text-[8px] text-muted text-right mt-2">{msg.time}</p>
                                     </div>
                                 </div>
@@ -358,6 +410,51 @@ const ClientSupport = () => {
                                     rows={5}
                                     className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:border-accent outline-none resize-none"
                                 />
+                            </div>
+
+                            <div className="space-y-3">
+                                <label className="text-[10px] font-black text-muted uppercase tracking-widest block">Attachments & Evidence</label>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    {[
+                                        { key: 'screenshot', label: 'Screenshot', icon: Smartphone },
+                                        { key: 'evidence', label: 'Evidence', icon: FileText },
+                                        { key: 'deliveryProof', label: 'Delivery Proof', icon: Truck },
+                                    ].map((type) => (
+                                        <div key={type.key} className="relative group">
+                                            <input
+                                                type="file"
+                                                accept="image/*,.pdf"
+                                                onChange={(e) => {
+                                                    const file = e.target.files[0];
+                                                    if (file) {
+                                                        const url = URL.createObjectURL(file);
+                                                        setNewTicket({
+                                                            ...newTicket,
+                                                            attachments: { ...newTicket.attachments, [type.key]: url }
+                                                        });
+                                                    }
+                                                }}
+                                                className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                            />
+                                            <div className={`p-4 rounded-xl border-2 border-dashed transition-all flex flex-col items-center justify-center gap-2 ${newTicket.attachments[type.key] ? 'border-success bg-success/5' : 'border-white/10 bg-white/5 hover:border-accent/40'}`}>
+                                                {newTicket.attachments[type.key] ? <CheckCircle2 size={20} className="text-success" /> : <type.icon size={20} className="text-muted" />}
+                                                <span className={`text-[9px] font-black uppercase tracking-widest ${newTicket.attachments[type.key] ? 'text-success' : 'text-muted'}`}>{type.label}</span>
+                                                {newTicket.attachments[type.key] && (
+                                                    <button 
+                                                        type="button" 
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            setNewTicket({...newTicket, attachments: {...newTicket.attachments, [type.key]: null}});
+                                                        }}
+                                                        className="absolute top-1 right-1 p-1 bg-danger/20 text-danger rounded-lg hover:bg-danger hover:text-white transition-all z-20"
+                                                    >
+                                                        <X size={10} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
 
                             <div className="flex gap-3 pt-2 flex-col sm:flex-row">

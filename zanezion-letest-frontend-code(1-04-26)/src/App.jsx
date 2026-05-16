@@ -53,6 +53,7 @@ const ClientTracking = lazy(() => import('./pages/Client/ClientTracking'));
 const ClientInvoices = lazy(() => import('./pages/Client/ClientInvoices'));
 const ClientSupport = lazy(() => import('./pages/Client/ClientSupport'));
 const ClientStore = lazy(() => import('./pages/Client/ClientStore'));
+const PersonalMembership = lazy(() => import('./pages/Client/PersonalMembership'));
 
 // Core Pages
 const Landing = lazy(() => import('./pages/Common/Landing'));
@@ -195,6 +196,7 @@ function App() {
   const isInventory = ['superadmin', 'inventory'].includes(auth.role);
   const isConcierge = ['superadmin', 'concierge'].includes(auth.role);
   const isClient = ['client'].includes(auth.role);
+  const isPersonnelRole = ['operations', 'procurement', 'logistics', 'inventory', 'concierge', 'staff'].includes(auth.role);
 
   return (
     <GlobalDataProvider>
@@ -269,8 +271,8 @@ function App() {
                 </RoleProtectedRoute>
               } />
               <Route path="leave" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client', 'procurement']}>
-                  <LeaveManagement />
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'client', 'admin', 'saas_client', 'procurement', 'operations', 'logistics', 'inventory', 'concierge', 'staff']}>
+                  {isPersonnelRole ? <EmployeePortal /> : <LeaveManagement />}
                 </RoleProtectedRoute>
               } />
               <Route path="invoices" element={
@@ -313,22 +315,22 @@ function App() {
 
               {/* Procurement Specific Routes */}
               <Route path="purchase-requests" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client', 'customer']}>
                   <PurchaseRequests />
                 </RoleProtectedRoute>
               } />
               <Route path="quotes" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client', 'customer']}>
                   <Quotes />
                 </RoleProtectedRoute>
               } />
               <Route path="audits" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'inventory']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'inventory', 'client', 'admin', 'saas_client', 'customer']}>
                   <Audits />
                 </RoleProtectedRoute>
               } />
               <Route path="purchase-orders" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'procurement', 'client', 'admin', 'saas_client', 'customer']}>
                   <PurchaseOrders />
                 </RoleProtectedRoute>
               } />
@@ -370,17 +372,17 @@ function App() {
 
               {/* Concierge Role Specific */}
               <Route path="events" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client']}>
-                  <Events />
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client', 'customer']}>
+                  {auth.role === 'customer' ? <ClientEvents /> : <Events />}
                 </RoleProtectedRoute>
               } />
               <Route path="guest-requests" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client', 'customer']}>
                   <GuestRequests />
                 </RoleProtectedRoute>
               } />
               <Route path="luxury-items" element={
-                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client']}>
+                <RoleProtectedRoute role={auth.role} allowedRoles={['superadmin', 'concierge', 'client', 'admin', 'saas_client', 'customer']}>
                   <LuxuryItems />
                 </RoleProtectedRoute>
               } />
@@ -434,6 +436,11 @@ function App() {
               <Route path="support" element={
                 <RoleProtectedRoute role={auth.role} allowedRoles={['client', 'admin', 'saas_client', 'customer']}>
                   <ClientSupport />
+                </RoleProtectedRoute>
+              } />
+              <Route path="membership" element={
+                <RoleProtectedRoute role={auth.role} allowedRoles={['customer', 'client', 'saas_client', 'admin']}>
+                  <PersonalMembership />
                 </RoleProtectedRoute>
               } />
               <Route path="store" element={

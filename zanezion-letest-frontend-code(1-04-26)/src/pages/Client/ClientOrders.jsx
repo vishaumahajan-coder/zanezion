@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import OrderModal from '../../components/OrderModal';
 import StatusBadge from '../../components/StatusBadge';
-import { displayOrderStatus, isoDateSlice } from '../../utils/orderWorkflow';
+import { displayOrderStatus, isoDateSlice, formatDateDisplayDMY } from '../../utils/orderWorkflow';
 import { normalizeRole, roleCanCreateInstitutionalOrder } from '../../utils/authUtils';
 
 const ClientOrders = () => {
@@ -58,6 +58,8 @@ const ClientOrders = () => {
         return isMyOrder && matchesSearch && matchesStatus;
     });
 
+    const hasDueDate = clientOrders.some(order => order.due_date || order.dueDate);
+
     const columns = [
         { header: "Order ID", accessor: "id", render: (order) => <span className="font-black text-white italic tracking-tighter">{order.id}</span> },
         {
@@ -93,18 +95,18 @@ const ClientOrders = () => {
             header: "Request Date",
             accessor: "requestDate",
             render: (order) => {
-                const d = isoDateSlice(order.order_date || order.created_at || order.requestDate || order.date || order.createdAt);
-                return <span className="text-secondary font-black italic">{d || '—'}</span>;
+                const d = formatDateDisplayDMY(order.order_date || order.created_at || order.requestDate || order.date || order.createdAt);
+                return <span className="text-secondary font-black italic">{d}</span>;
             }
         },
-        {
+        ...(hasDueDate ? [{
             header: "Due Date",
             accessor: "dueDate",
             render: (order) => {
-                const d = isoDateSlice(order.due_date || order.dueDate);
+                const d = formatDateDisplayDMY(order.due_date || order.dueDate);
                 return <span className="text-white font-black italic">{d || '—'}</span>;
             }
-        },
+        }] : []),
         {
             header: "Status",
             accessor: "status",
@@ -113,11 +115,13 @@ const ClientOrders = () => {
                 const palette = st === 'completed' ? 'bg-success/20 text-success border-success/30' :
                     st === 'cancelled' ? 'bg-danger/20 text-danger border-danger/30' :
                         st === 'admin_review' || st === 'created' ? 'bg-warning/20 text-warning border-warning/30' :
-                            'bg-accent/20 text-accent border-accent/30';
+                            st === 'concierge' ? 'bg-accent/20 text-accent border-accent/30' :
+                                'bg-info/20 text-info border-info/30';
                 const dot = st === 'completed' ? 'bg-success' :
                     st === 'cancelled' ? 'bg-danger' :
                         st === 'admin_review' || st === 'created' ? 'bg-warning animate-pulse' :
-                            'bg-accent animate-pulse';
+                            st === 'concierge' ? 'bg-accent animate-pulse' :
+                                'bg-info animate-pulse';
                 return (
                     <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${palette}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${dot}`}></span>
@@ -240,7 +244,7 @@ const ClientOrders = () => {
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <p className="text-[9px] text-muted font-black uppercase tracking-widest mb-0.5">Deployment Date</p>
-                                <p className="text-xs font-black text-secondary italic tracking-tighter">{isoDateSlice(order.order_date || order.date || order.requestDate || order.created_at || order.createdAt) || '—'}</p>
+                                <p className="text-xs font-black text-secondary italic tracking-tighter">{formatDateDisplayDMY(order.order_date || order.date || order.requestDate || order.created_at || order.createdAt)}</p>
                             </div>
                             <div>
                                 <p className="text-[9px] text-muted font-black uppercase tracking-widest mb-0.5">Fiscal Value</p>

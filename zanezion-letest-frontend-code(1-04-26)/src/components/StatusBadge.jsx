@@ -15,6 +15,7 @@ const StatusBadge = ({ status, className }) => {
       case 'pending_review':
       case 'created':
       case 'admin_review':
+      case 'concierge':
       case 'preparing':
       case 'warning':
       case 'planning':

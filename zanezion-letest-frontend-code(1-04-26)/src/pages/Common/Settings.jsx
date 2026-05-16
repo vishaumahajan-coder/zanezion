@@ -4,6 +4,7 @@ import { User, Shield, Bell, Globe, CreditCard, Save, Lock, RotateCcw, Truck, Do
 
 import { useData } from '../../context/GlobalDataContext';
 import { normalizeRole } from '../../utils/authUtils';
+import { API_BASE_URL } from '../../utils/api';
 
 
 function pickAvatarUrl(user) {
@@ -25,6 +26,7 @@ const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const SETTINGS_TABS = [
   { id: 'profile', label: 'Profile', icon: User, roles: ['superadmin', 'admin', 'client', 'saas_client', 'operations', 'logistics', 'procurement', 'inventory', 'concierge', 'finance', 'field_staff'] },
   { id: 'logistics', label: 'Delivery pricing', icon: Truck, roles: ['superadmin', 'admin', 'logistics'] },
+  { id: 'pricing', label: 'Pricing Control', icon: DollarSign, roles: ['superadmin', 'admin'] },
   { id: 'security', label: 'Security', icon: Lock, roles: ['superadmin', 'admin', 'client', 'saas_client', 'operations', 'logistics', 'procurement', 'inventory', 'concierge', 'finance', 'field_staff'] },
   { id: 'branding', label: 'Branding', icon: Globe, roles: ['superadmin', 'admin', 'client', 'saas_client'] },
   { id: 'notifications', label: 'Notifications', icon: Bell, roles: ['superadmin', 'admin', 'client', 'saas_client'] },
@@ -32,7 +34,7 @@ const SETTINGS_TABS = [
 ];
 
 const Settings = () => {
-  const { currentUser, setCurrentUser, updateUser, deliveryPricing, setDeliveryPricing, clients, updateClientBranding } = useData();
+  const { currentUser, setCurrentUser, updateUser, deliveryPricing, setDeliveryPricing, shippingModePricing, updateShippingModePricing, clients, updateClientBranding } = useData();
   const [activeTab, setActiveTab] = useState('profile');
   const [isSaving, setIsSaving] = useState(false);
   const [profile, setProfile] = useState(() => ({
@@ -86,6 +88,73 @@ const Settings = () => {
     orderUpdates: true,
     securityLogs: true
   });
+  const [shippingCharges, setShippingCharges] = useState({
+    Road: Number(shippingModePricing?.Road ?? 0),
+    Sea: Number(shippingModePricing?.Sea ?? 150),
+    Air: Number(shippingModePricing?.Air ?? 300),
+  });
+
+  const [pricingSettings, setPricingSettings] = useState({
+    chauffeur_base_price: '0.00',
+    delivery_base_price: '0.00',
+    pickup_charges: '0.00',
+    per_km_charges: '0.00'
+  });
+
+  const fetchPricing = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/settings/system`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await response.json();
+      if (data.success) {
+        setPricingSettings({
+          chauffeur_base_price: data.data.chauffeur_base_price || '50.00',
+          delivery_base_price: data.data.delivery_base_price || '25.00',
+          pickup_charges: data.data.pickup_charges || '10.00',
+          per_km_charges: data.data.per_km_charges || '2.50'
+        });
+      }
+    } catch (err) {
+      console.error('Fetch pricing error:', err);
+    }
+  };
+
+  const savePricing = async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/settings/system`, {
+        method: 'PUT',
+        headers: { 
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(pricingSettings)
+      });
+      const data = await response.json();
+      if (data.success) {
+        swalSuccess('Pricing Updated', 'Operational price controls have been synchronized.');
+      }
+    } catch (err) {
+      swalError('Update Failed', 'Internal terminal error during sync.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'pricing') {
+      fetchPricing();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    setShippingCharges({
+      Road: Number(shippingModePricing?.Road ?? 0),
+      Sea: Number(shippingModePricing?.Sea ?? 150),
+      Air: Number(shippingModePricing?.Air ?? 300),
+    });
+  }, [shippingModePricing]);
 
   const handleAvatarFile = (e) => {
     const file = e.target.files?.[0];
@@ -343,6 +412,50 @@ const Settings = () => {
                     </p>
                   </div>
 
+                  <div className="mb-8 p-4 sm:p-6 border border-accent/20 rounded-2xl bg-accent/[0.04]">
+                    <div className="flex items-center justify-between gap-4 mb-4">
+                      <div>
+                        <h4 className="text-sm font-black uppercase tracking-widest text-accent">Shipping mode charges</h4>
+                        <p className="text-xs text-secondary mt-1">Super Admin can manually set Road / Sea / Air charges used in customer checkout.</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {['Road', 'Sea', 'Air'].map((mode) => (
+                        <div key={mode} className="space-y-2">
+                          <label className="text-[9px] font-black text-muted uppercase tracking-widest">{mode} charge</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-accent font-black text-sm">$</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={shippingCharges[mode]}
+                              onChange={(e) => setShippingCharges((prev) => ({ ...prev, [mode]: e.target.value }))}
+                              className="bg-black/40 border border-white/10 rounded-lg pl-7 pr-3 py-2.5 w-full text-sm font-black text-white focus:border-accent outline-none transition-all"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const payload = {
+                            Road: Number(shippingCharges.Road) || 0,
+                            Sea: Number(shippingCharges.Sea) || 0,
+                            Air: Number(shippingCharges.Air) || 0,
+                          };
+                          await updateShippingModePricing(payload);
+                          swalSuccess('Shipping charges updated', 'Road / Sea / Air pricing has been saved.');
+                        }}
+                        className="btn-primary px-6 py-2.5 text-[10px] font-black uppercase tracking-widest"
+                      >
+                        Save shipping charges
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="md:hidden space-y-3 min-w-0">
                     {deliveryPricing.map((tier) => (
                       <div key={tier.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-xl space-y-3 min-w-0">
@@ -407,6 +520,102 @@ const Settings = () => {
                         </div>
                       </div>
                     ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'pricing' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                <div className="glass-card p-8 md:p-10">
+                  <div className="flex items-center gap-4 mb-10">
+                    <div className="w-12 h-12 bg-accent/10 rounded-xl flex items-center justify-center text-accent">
+                      <DollarSign size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-white tracking-tight">Pricing Control</h3>
+                      <p className="text-xs text-secondary mt-0.5 opacity-70">Master override for operational unit costs.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="space-y-2 group">
+                      <label className="text-[9px] font-black text-muted uppercase tracking-[0.3em] flex items-center gap-2 group-focus-within:text-accent transition-colors">
+                        Chauffeur Base Price
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-accent font-black">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={pricingSettings.chauffeur_base_price}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, chauffeur_base_price: e.target.value })}
+                          className="w-full bg-black/20 border border-white/10 rounded-xl pl-10 pr-5 py-4 text-sm focus:border-accent outline-none font-bold transition-all text-white"
+                        />
+                      </div>
+                      <p className="text-[10px] text-muted italic">Starting cost for all chauffeur requisition orders.</p>
+                    </div>
+
+                    <div className="space-y-2 group">
+                      <label className="text-[9px] font-black text-muted uppercase tracking-[0.3em] flex items-center gap-2 group-focus-within:text-accent transition-colors">
+                        Delivery Base Price
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-accent font-black">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={pricingSettings.delivery_base_price}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, delivery_base_price: e.target.value })}
+                          className="w-full bg-black/20 border border-white/10 rounded-xl pl-10 pr-5 py-4 text-sm focus:border-accent outline-none font-bold transition-all text-white"
+                        />
+                      </div>
+                      <p className="text-[10px] text-muted italic">Minimum flat fee for standard logistics missions.</p>
+                    </div>
+
+                    <div className="space-y-2 group">
+                      <label className="text-[9px] font-black text-muted uppercase tracking-[0.3em] flex items-center gap-2 group-focus-within:text-accent transition-colors">
+                        Pickup Charges
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-accent font-black">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={pricingSettings.pickup_charges}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, pickup_charges: e.target.value })}
+                          className="w-full bg-black/20 border border-white/10 rounded-xl pl-10 pr-5 py-4 text-sm focus:border-accent outline-none font-bold transition-all text-white"
+                        />
+                      </div>
+                      <p className="text-[10px] text-muted italic">Additional surcharge for off-hub collection points.</p>
+                    </div>
+
+                    <div className="space-y-2 group">
+                      <label className="text-[9px] font-black text-muted uppercase tracking-[0.3em] flex items-center gap-2 group-focus-within:text-accent transition-colors">
+                        Per Kilometer Charges
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-accent font-black">$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={pricingSettings.per_km_charges}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, per_km_charges: e.target.value })}
+                          className="w-full bg-black/20 border border-white/10 rounded-xl pl-10 pr-5 py-4 text-sm focus:border-accent outline-none font-bold transition-all text-white"
+                        />
+                      </div>
+                      <p className="text-[10px] text-muted italic">Variable rate applied to computed route distances.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-12 pt-8 border-t border-white/5 flex justify-end">
+                    <button
+                      onClick={savePricing}
+                      disabled={isSaving}
+                      className="btn-primary px-10 py-4 text-xs font-black uppercase tracking-widest shadow-xl shadow-accent/20 flex items-center gap-3"
+                    >
+                      {isSaving ? 'Synchronizing...' : <><Save size={16} /> Deploy Price Update</>}
+                    </button>
                   </div>
                 </div>
               </div>

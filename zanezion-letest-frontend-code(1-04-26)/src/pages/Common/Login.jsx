@@ -9,7 +9,7 @@ import {
 import { motion } from 'framer-motion';
 import { useData } from '../../context/GlobalDataContext';
 import api from '../../utils/api';
-import { normalizeRole } from '../../utils/authUtils';
+import { resolvePortalRole } from '../../utils/authUtils';
 import { shouldDenyStaffLogin } from '../../utils/staffLoginGate';
 
 const Login = ({ onLogin }) => {
@@ -30,12 +30,13 @@ const Login = ({ onLogin }) => {
 
   const roles = [
     { id: 'superadmin', label: 'Super Admin', icon: ShieldCheck, color: 'bg-accent' },
+    { id: 'admin', label: 'Admin', icon: LayoutDashboard, color: 'bg-purple-500' },
     { id: 'procurement', label: 'Procurement', icon: ShoppingCart, color: 'bg-info' },
     { id: 'operations', label: 'Operations', icon: Briefcase, color: 'bg-primary' },
     { id: 'logistics', label: 'Logistics', icon: Truck, color: 'bg-success' },
     { id: 'inventory', label: 'Inventory', icon: Package, color: 'bg-warning' },
     { id: 'concierge', label: 'Concierge', icon: Heart, color: 'bg-danger' },
-    { id: 'client', label: 'Client Portal', icon: Users, color: 'bg-indigo-500' },
+    { id: 'client', label: 'Client', icon: Users, color: 'bg-indigo-500' },
     { id: 'staff', label: 'Field Staff', icon: Smartphone, color: 'bg-orange-500' },
   ];
 
@@ -53,7 +54,7 @@ const Login = ({ onLogin }) => {
 
       if (res.data?.success) {
         const { token, user, menuPermissions: perms } = res.data.data;
-        const normalizedRole = normalizeRole(user.role);
+        const normalizedRole = resolvePortalRole(user);
 
         const userData = {
           ...user,
@@ -153,16 +154,17 @@ const Login = ({ onLogin }) => {
   };
 
   const handleQuickLogin = (role) => {
-    // Credential mapping for all system roles
+    // Credential mapping — all passwords are 'admin123'
     const demoCredentials = {
-      'superadmin': { email: 'admin@zanezion.com', password: 'admin123' },
-      'procurement': { email: 'procurement@demo.com', password: 'admin123' },
-      'operations': { email: 'operation@demo.com', password: 'admin123' },
-      'logistics': { email: 'logistics@demo.com', password: 'admin123' },
-      'inventory': { email: 'inventory@demo.com', password: 'admin123' },
-      'concierge': { email: 'concierge@demo.com', password: 'admin123' },
-      'client': { email: 'admin@demo.com', password: 'admin123' },
-      'staff': { email: 'staff@demo.com', password: 'admin123' }
+      'superadmin': { email: 'admin@zanezion.com',      password: '123456' },
+      'admin':      { email: 'admin@example.com',       password: '123456' },
+      'procurement': { email: 'procurement@example.com', password: '123456' },
+      'operations': { email: 'operation@example.com',   password: '123456' },
+      'logistics':  { email: 'logistics@example.com',   password: '123456' },
+      'inventory':  { email: 'inventory@example.com',   password: '123456' },
+      'concierge':  { email: 'concierge@example.com',   password: '123456' },
+      'client':     { email: 'customer1@example.com',   password: '123456' },
+      'staff':      { email: 'staff@example.com',       password: '123456' },
     };
 
     const credentials = demoCredentials[role];
@@ -410,7 +412,7 @@ const Login = ({ onLogin }) => {
             <div className="relative flex justify-center text-[10px]"><span className="bg-[#0a0a0a] px-4 text-muted font-bold uppercase tracking-[0.2em]">Rapid Role Switch</span></div>
           </div>
 
-          <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-4 lg:grid-cols-4 gap-2 lg:gap-3">
+          <div className="grid grid-cols-3 xs:grid-cols-3 sm:grid-cols-5 lg:grid-cols-5 gap-2 lg:gap-3">
             {roles.map(role => (
               <button
                 key={role.id}

@@ -12,7 +12,7 @@ import Pagination from '../../components/Common/Pagination';
 import { useData } from '../../context/GlobalDataContext';
 
 const Projects = () => {
-  const { projects, addProject, updateProject, deleteProject, fetchProjects, clients, fetchClients, convertProjectToMission, hasMenuPermission } = useData();
+  const { projects, addProject, updateProject, deleteProject, fetchProjects, customerUsers, fetchCustomerUsers, convertProjectToMission, hasMenuPermission } = useData();
 
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
@@ -25,8 +25,23 @@ const Projects = () => {
 
   React.useEffect(() => {
     fetchProjects();
-    fetchClients();
-  }, [fetchProjects, fetchClients]);
+    fetchCustomerUsers();
+  }, [fetchProjects, fetchCustomerUsers]);
+
+  const customerOptions = React.useMemo(() => {
+    const byScopeId = new Map();
+    (customerUsers || []).forEach((u) => {
+      const scopeId = u?.company_id ?? u?.companyId ?? u?.id;
+      if (scopeId == null || String(scopeId).trim() === '') return;
+      if (!byScopeId.has(String(scopeId))) {
+        byScopeId.set(String(scopeId), {
+          id: scopeId,
+          label: u?.name || u?.email || `Customer ${scopeId}`,
+        });
+      }
+    });
+    return Array.from(byScopeId.values());
+  }, [customerUsers]);
 
   // All filtering done on frontend for consistency
   const filteredProjects = projects.filter(p => {
@@ -51,19 +66,30 @@ const Projects = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!formData.name?.trim()) return swalWarning('Required', 'Project name is required.');
-    if (modalType === 'add') {
-      addProject(formData);
-    } else if (modalType === 'edit') {
-      updateProject({ ...selectedProject, ...formData });
+    try {
+      if (modalType === 'add') {
+        await addProject(formData);
+      } else if (modalType === 'edit') {
+        await updateProject({ ...selectedProject, ...formData });
+      }
+      setIsModalOpen(false);
+      // Explicitly refresh to ensure sync
+      if (fetchProjects) await fetchProjects();
+    } catch (e) {
+      swalError('Error', 'Failed to save project changes.');
     }
-    setIsModalOpen(false);
   };
 
-  const handleDelete = () => {
-    deleteProject(selectedProject.id);
-    setIsModalOpen(false);
+  const handleDelete = async () => {
+    try {
+      await deleteProject(selectedProject.id);
+      setIsModalOpen(false);
+      if (fetchProjects) await fetchProjects();
+    } catch (e) {
+      swalError('Error', 'Failed to archive project.');
+    }
   };
 
   const handleLaunchMission = async (prj) => {
@@ -194,23 +220,23 @@ const Projects = () => {
                     <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none" disabled={modalType === 'view'} />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-muted uppercase">Client</label>
+                    <label className="text-[10px] font-bold text-muted uppercase">Customer</label>
                     <select 
                       value={formData.clientId} 
                       onChange={(e) => {
-                        const selectedClient = clients.find(c => String(c.id) === e.target.value);
+                        const selectedCustomer = customerOptions.find(c => String(c.id) === e.target.value);
                         setFormData({ 
                           ...formData, 
                           clientId: e.target.value, 
-                          client: selectedClient ? selectedClient.companyName || selectedClient.name : '' 
+                          client: selectedCustomer ? selectedCustomer.label : '' 
                         });
                       }} 
                       className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none" 
                       disabled={modalType === 'view'}
                     >
-                      <option value="">Select Client</option>
-                      {clients.map(c => (
-                        <option key={c.id} value={c.id}>{c.companyName || c.name}</option>
+                      <option value="">Select Customer</option>
+                      {customerOptions.map(c => (
+                        <option key={c.id} value={c.id}>{c.label}</option>
                       ))}
                     </select>
                   </div>

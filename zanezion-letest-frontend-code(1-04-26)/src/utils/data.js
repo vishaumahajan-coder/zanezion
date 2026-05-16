@@ -24,11 +24,11 @@ export const INVENTORY_ALERTS = [
 ];
 
 export const CLIENTS = [
-  { id: 1, name: "Goldwynn Residences", location: "Cable Beach, Nassau", orders: 18, inventory: "Stable", status: "Active" },
-  { id: 2, name: "SY Azure", location: "Nassau Harbour", orders: 24, inventory: "Stable", status: "Active" },
-  { id: 3, name: "Lyford Cay Estate", location: "Lyford Cay, Nassau", orders: 11, inventory: "Warning", status: "Active" },
-  { id: 4, name: "Kamalame Cay Resort", location: "Andros, Bahamas", orders: 7, inventory: "Stable", status: "Active" },
-  { id: 5, name: "Blue Lagoon Island", location: "Salt Cay, Nassau", orders: 9, inventory: "Low", status: "Warning" },
+  { id: 1, name: "Goldwynn Residences", location: "Cable Beach, Nassau", orders: 18, inventory: "Stable", status: "Active", client_type: "Business", clientType: "Business" },
+  { id: 2, name: "SY Azure", location: "Nassau Harbour", orders: 24, inventory: "Stable", status: "Active", client_type: "Business", clientType: "Business" },
+  { id: 3, name: "Lyford Cay Estate", location: "Lyford Cay, Nassau", orders: 11, inventory: "Warning", status: "Active", client_type: "Business", clientType: "Business" },
+  { id: 4, name: "Kamalame Cay Resort", location: "Andros, Bahamas", orders: 7, inventory: "Stable", status: "Active", client_type: "Business", clientType: "Business" },
+  { id: 5, name: "Blue Lagoon Island", location: "Salt Cay, Nassau", orders: 9, inventory: "Low", status: "Warning", client_type: "Business", clientType: "Business" },
 ];
 
 export const VENDOR_PERFORMANCE = [
@@ -104,6 +104,41 @@ export const LIFESTYLE_SERVICES = [
       { id: 19, title: "Sustainability Consulting", description: "Helping clients meet eco goals through smarter sourcing and inventory practices." }
     ]
   }
+];
+
+/** Personal portal membership: platform fee only; fulfilment for each service line is quoted & billed separately */
+export const PERSONAL_MEMBERSHIP_FEE_USD = 9.99;
+
+/**
+ * Concierge-style services members can access after subscribing (coordination / portal access;
+ * actual job costs are separate). Used on Personal Membership + Plans lifestyle card.
+ */
+export const PERSONAL_MEMBERSHIP_CONCIERGE_SERVICES = [
+  {
+    key: 'events',
+    title: 'Event Services',
+    tagline: 'Events-related help through your concierge.',
+    items: ['Events related help'],
+  },
+  {
+    key: 'guest',
+    title: 'Guest Requests',
+    tagline: 'Errands, sourcing, shopping, documents & bespoke asks.',
+    items: [
+      'Errand services (small day-to-day tasks)',
+      'Product sourcing',
+      'Personal shopping',
+      'Package pickup & delivery',
+      'Document pickup & delivery',
+      'Custom requests',
+    ],
+  },
+  {
+    key: 'other',
+    title: 'Other Services',
+    tagline: 'Luxury inventory, storage, and mobility.',
+    items: ['Luxury items', 'Storage hub', 'Chauffeur services'],
+  },
 ];
 
 export const ACCESS_PLANS = [
@@ -186,8 +221,8 @@ export const INVOICES = [
 ];
 
 export const VENDORS = [
-  { id: 1, name: 'Caribbean Fine Provisions', contact_name: 'Mike Johnson', email: 'mike@cfp.com', phone: '123-456-7895' },
-  { id: 2, name: 'Nassau Wine & Spirits', contact_name: 'Sarah Lee', email: 'sarah@nws.com', phone: '123-456-7896' },
+  { id: 1, name: 'Caribbean Fine Provisions', contact_name: 'Mike Johnson', email: 'mike@cfp.com', phone: '123-456-7895', status: 'active' },
+  { id: 2, name: 'Nassau Wine & Spirits', contact_name: 'Sarah Lee', email: 'sarah@nws.com', phone: '123-456-7896', status: 'active' },
 ];
 
 /** Standard catalogue taxonomy — filter marketplace / reporting */
@@ -199,9 +234,42 @@ export const MARKETPLACE_CATEGORIES = [
   'Maritime',
   'Pharmaceutical',
   'Building Supplies',
+  'Electronics',
   'Home',
   'General',
 ];
+
+/** Map retired inventory UI labels onto marketplace taxonomy */
+const LEGACY_INVENTORY_CATEGORY = {
+  'Marine Supply': 'Maritime',
+  Provisions: 'Grocery',
+  Housekeeping: 'Home',
+};
+
+/** Coerce stored / PR category toward marketplace list; unknown strings preserved */
+export function normalizeToMarketplaceCategory(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return 'General';
+  if (MARKETPLACE_CATEGORIES.includes(s)) return s;
+  return LEGACY_INVENTORY_CATEGORY[s] || s;
+}
+
+/** Select options: marketplace list plus current value when it is not in the list */
+export function marketplaceCategorySelectOptions(currentCategory) {
+  const c = String(normalizeToMarketplaceCategory(currentCategory) ?? '').trim();
+  if (c && !MARKETPLACE_CATEGORIES.includes(c)) {
+    return [...MARKETPLACE_CATEGORIES, c];
+  }
+  return [...MARKETPLACE_CATEGORIES];
+}
+
+/** Exact label from MARKETPLACE_CATEGORIES (case-insensitive) so API/UI filters stay aligned */
+export function canonicalMarketplaceCategory(raw) {
+  const mapped = normalizeToMarketplaceCategory(raw);
+  const lower = String(mapped).toLowerCase();
+  const hit = MARKETPLACE_CATEGORIES.find((c) => c.toLowerCase() === lower);
+  return hit || mapped;
+}
 
 export const INVENTORY = [
   { id: 1, name: 'Dom Perignon Champagne', category: 'Beverage', quantity: 6, price: 200, vendor_id: 2, vendor_name: 'Nassau Wine & Spirits', warehouse_name: 'Main Warehouse' },

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import Table from '../../components/Table';
 import Modal from '../../components/Modal';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   Plus, Search, FileText, Store,
   DollarSign, Clock, CheckCircle, XCircle,
@@ -43,7 +45,7 @@ function normalizeQuoteItems(items) {
 }
 
 const Quotes = () => {
-  const { quotes, addQuote, updateQuote, deleteQuote, addOrder, fetchQuotes, hasMenuPermission } = useData();
+  const { quotes, vendors, addQuote, updateQuote, deleteQuote, addOrder, fetchQuotes, hasMenuPermission } = useData();
   const location = useLocation();
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
@@ -58,10 +60,11 @@ const Quotes = () => {
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [formData, setFormData] = useState({
     vendor: '',
-    vendorId: 1,
+    vendorId: '',
     items: [{ name: '', qty: 1, price: 0 }],
     leadTime: '',
     validity: '',
+    paymentTerms: 'Net 30',
     status: 'Pending',
     quoteType: 'client',
   });
@@ -74,10 +77,11 @@ const Quotes = () => {
     setModalType('add');
     setFormData({
       vendor: '',
-      vendorId: 1,
+      vendorId: '',
       items: [{ name: '', qty: 1, price: 0 }],
       leadTime: '3 Days',
       validity: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      paymentTerms: 'Net 30',
       status: 'Pending',
     });
     setIsModalOpen(true);
@@ -94,16 +98,20 @@ const Quotes = () => {
     setModalType(type);
     setFormData(quote.id ? {
       ...quote,
+      vendorId: quote.vendorId ?? quote.vendor_id ?? '',
+      vendor: quote.vendor || quote.vendor_name || '',
       items: normalizeQuoteItems(quote.items),
       validity: quote.validity ?? (quote.validity_date?.split?.('T')?.[0] || ''),
       leadTime: quote.leadTime ?? quote.lead_time ?? '',
+      paymentTerms: quote.paymentTerms ?? quote.payment_terms ?? 'Net 30',
       quoteType: quote.quote_type === 'vendor_request' || quote.quoteType === 'vendor' ? 'vendor' : 'client',
     } : {
       vendor: '',
-      vendorId: 1,
+      vendorId: '',
       items: [{ name: '', qty: 1, price: 0 }],
       leadTime: '3 Days',
       validity: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      paymentTerms: 'Net 30',
       status: 'Pending',
       quoteType: 'client',
     });
@@ -128,14 +136,35 @@ const Quotes = () => {
     );
     const total = items.reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (parseInt(i.qty, 10) || 0), 0);
     const qt = formData.quoteType === 'vendor' ? 'vendor_request' : 'client';
+    const parsedVendorId = parseInt(String(formData.vendorId ?? '').trim(), 10);
+    const normalizedVendorId = Number.isFinite(parsedVendorId) && parsedVendorId > 0 ? parsedVendorId : null;
+    if (!normalizedVendorId) {
+      window.alert('Please select a valid supply partner before saving the quote.');
+      return;
+    }
+    const selectedVendor = (vendors || []).find((v) => String(v.id) === String(normalizedVendorId));
+    const resolvedVendorName = String(
+      selectedVendor?.name ||
+      selectedVendor?.vendor_name ||
+      selectedVendor?.business_name ||
+      selectedVendor?.company_name ||
+      formData.vendor ||
+      ''
+    ).trim();
     const finalData = {
       ...formData,
+      vendor: resolvedVendorName,
+      vendor_name: resolvedVendorName,
+      vendor_id: normalizedVendorId,
+      vendorId: normalizedVendorId,
       items,
       total,
       total_amount: total,
       date: new Date().toISOString().split('T')[0],
       quote_type: qt,
       quoteType: formData.quoteType,
+      payment_terms: formData.paymentTerms,
+      paymentTerms: formData.paymentTerms,
     };
     if (modalType === 'add') {
       addQuote(finalData);
@@ -168,15 +197,74 @@ const Quotes = () => {
     }, 300);
   };
 
+  const handleDownloadPdf = (quote) => {
+    const rows = normalizeQuoteItems(quote.items || []).map((item) => {
+      const qty = parseInt(item.qty, 10) || 0;
+      const unit = parseFloat(item.price) || 0;
+      const lineTotal = qty * unit;
+      return [
+        item.name || 'Item',
+        String(qty),
+        String(quote.quote_type === 'vendor_request' || quote.quoteType === 'vendor' ? 'N/A' : `$${unit.toFixed(2)}`),
+        String(quote.quote_type === 'vendor_request' || quote.quoteType === 'vendor' ? 'N/A' : `$${lineTotal.toFixed(2)}`),
+      ];
+    });
+    const total = parseFloat(quote.total_amount || quote.total || 0) || 0;
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text('ZaneZion Quote', 14, 16);
+    doc.setFontSize(10);
+    doc.text(`Quote ID: ${quote.id || '-'}`, 14, 24);
+    doc.text(`Vendor: ${quote.vendor_name || quote.vendor || '-'}`, 14, 30);
+    doc.text(`Type: ${quote.quote_type === 'vendor_request' || quote.quoteType === 'vendor' ? 'Vendor Quote Request' : 'Client Quote'}`, 14, 36);
+    autoTable(doc, {
+      startY: 42,
+      head: [['Item', 'Qty', 'Unit Price', 'Line Total']],
+      body: rows,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [20, 20, 20] }
+    });
+    const finalY = doc.lastAutoTable?.finalY || 60;
+    doc.text(
+      `Total: ${quote.quote_type === 'vendor_request' || quote.quoteType === 'vendor' ? 'N/A' : `$${total.toFixed(2)}`}`,
+      14,
+      finalY + 10
+    );
+    doc.save(`quote_${quote.id || 'draft'}.pdf`);
+  };
+
   const columns = [
     { header: "Institutional ID", accessor: "id", render: (row) => <span className="font-mono font-bold text-accent">{row.id}</span> },
-    { header: "Supply Partner", accessor: "vendor_name", render: (row) => row.vendor_name || row.vendor || 'Unknown Provider' },
+    {
+      header: "Supply Partner",
+      accessor: "vendor_name",
+      render: (row) => {
+        const vid = row.vendorId ?? row.vendor_id;
+        const linkedVendor = (vendors || []).find((v) => String(v.id) === String(vid));
+        return (
+          linkedVendor?.name ||
+          linkedVendor?.vendor_name ||
+          linkedVendor?.business_name ||
+          linkedVendor?.company_name ||
+          row.vendor_name ||
+          row.vendor ||
+          'Unknown Provider'
+        );
+      }
+    },
     { header: "Request Date", accessor: "date", render: (row) => (row.created_at || row.date)?.split('T')[0] || 'N/A' },
     { header: "Protocol Validity", accessor: "validity_date", render: (row) => (row.validity_date || row.validity)?.split('T')[0] || 'N/A' },
     {
       header: "Settlement Value",
       accessor: "total_amount",
-      render: (row) => <span className="font-black text-white">${parseFloat(row.total_amount || row.total || 0).toLocaleString()}</span>
+      render: (row) => {
+        const isVendorQuote = row.quote_type === 'vendor_request' || row.quoteType === 'vendor';
+        return (
+          <span className="font-black text-white">
+            {isVendorQuote ? 'N/A' : `$${parseFloat(row.total_amount || row.total || 0).toLocaleString()}`}
+          </span>
+        );
+      }
     },
     {
       header: "Protocol Status",
@@ -188,6 +276,18 @@ const Quotes = () => {
   const totalValue = quotes.reduce((acc, q) => acc + parseFloat(q.total_amount || q.total || 0), 0);
   const activeQuotes = quotes.filter(q => q.status === 'Pending').length;
   const acceptedQuotes = quotes.filter(q => q.status === 'Accepted').length;
+  const compactCurrency = (value) => {
+    const n = Number(value) || 0;
+    if (Math.abs(n) >= 1000) {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        notation: 'compact',
+        maximumFractionDigits: 1,
+      }).format(n);
+    }
+    return `$${n.toLocaleString()}`;
+  };
 
   return (
     <div className="space-y-8">
@@ -209,7 +309,7 @@ const Quotes = () => {
       <div className="no-print-logic grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: 'Total Quotes', value: quotes.length, icon: FileText, color: 'text-accent' },
-          { label: 'Total Value', value: `$${totalValue.toLocaleString()}`, icon: DollarSign, color: 'text-success' },
+          { label: 'Total Value', value: compactCurrency(totalValue), icon: DollarSign, color: 'text-success' },
           { label: 'Active', value: activeQuotes, icon: Clock, color: 'text-info' },
           { label: 'Accepted', value: acceptedQuotes, icon: CheckCircle, color: 'text-success' },
         ].map((stat, i) => (
@@ -219,7 +319,7 @@ const Quotes = () => {
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-black text-muted uppercase tracking-widest truncate">{stat.label}</p>
-              <p className="text-xl font-black text-white">{stat.value}</p>
+              <p className="text-lg sm:text-xl font-black text-white leading-tight truncate">{stat.value}</p>
             </div>
           </div>
         ))}
@@ -254,6 +354,13 @@ const Quotes = () => {
               title="Print / download quote"
             >
               <Printer size={16} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleDownloadPdf(quote); }}
+              className="p-2 rounded-lg text-secondary hover:text-white hover:bg-white/10 transition-all flex items-center justify-center"
+              title="Download quote PDF"
+            >
+              <HardDrive size={16} />
             </button>
             </div>
           )}
@@ -294,7 +401,27 @@ const Quotes = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1 col-span-2">
                   <label className="text-[10px] font-bold text-muted uppercase">Supply Partner</label>
-                  <input type="text" value={formData.vendor} onChange={(e) => setFormData({ ...formData, vendor: e.target.value })} className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold" disabled={modalType === 'view'} placeholder="e.g. Monaco Global Services" />
+                  <select
+                    value={String(formData.vendorId || '')}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      const selected = (vendors || []).find((v) => String(v.id) === String(nextId));
+                      const selectedName = selected?.name || selected?.vendor_name || selected?.business_name || selected?.company_name || '';
+                      setFormData({ ...formData, vendorId: nextId, vendor: selectedName });
+                    }}
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
+                    disabled={modalType === 'view'}
+                  >
+                    <option value="">Select supply partner...</option>
+                    {(vendors || []).map((v) => {
+                      const label = v.name || v.vendor_name || v.business_name || v.company_name || `Vendor #${v.id}`;
+                      return (
+                        <option key={String(v.id)} value={v.id}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Protocol ID</label>
@@ -328,6 +455,21 @@ const Quotes = () => {
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-muted uppercase">Validity Threshold</label>
                   <input type="date" value={formData.validity} onChange={(e) => setFormData({ ...formData, validity: e.target.value })} className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none" disabled={modalType === 'view'} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-muted uppercase">Payment Terms</label>
+                  <select
+                    className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:border-accent outline-none font-bold"
+                    value={formData.paymentTerms || 'Net 30'}
+                    onChange={(e) => setFormData({ ...formData, paymentTerms: e.target.value })}
+                    disabled={modalType === 'view'}
+                  >
+                    <option value="Immediate">Immediate</option>
+                    <option value="Net 15">Net 15</option>
+                    <option value="Net 30">Net 30</option>
+                    <option value="Net 45">Net 45</option>
+                    <option value="Net 60">Net 60</option>
+                  </select>
                 </div>
                 <div className="space-y-1 col-span-2">
                   <label className="text-[10px] font-bold text-muted uppercase">Institutional Quote PDF</label>
@@ -387,18 +529,22 @@ const Quotes = () => {
                       </div>
                       <div className="w-20 space-y-1">
                         <label className="text-[8px] text-muted uppercase">Unit Price</label>
-                        <input
-                          type="number"
-                          value={item.price}
-                          onChange={(e) => {
-                            const newItems = [...normalizeQuoteItems(formData.items)];
-                            newItems[idx] = { ...newItems[idx], price: e.target.value };
-                            setFormData({ ...formData, items: newItems });
-                          }}
-                          className="w-full bg-transparent border-0 border-b border-border focus:border-accent text-xs p-0 outline-none"
-                          disabled={modalType === 'view'}
-                          step="0.01"
-                        />
+                        {formData.quoteType === 'vendor' ? (
+                          <div className="text-[10px] text-muted font-bold pt-1">Not applicable</div>
+                        ) : (
+                          <input
+                            type="number"
+                            value={item.price}
+                            onChange={(e) => {
+                              const newItems = [...normalizeQuoteItems(formData.items)];
+                              newItems[idx] = { ...newItems[idx], price: e.target.value };
+                              setFormData({ ...formData, items: newItems });
+                            }}
+                            className="w-full bg-transparent border-0 border-b border-border focus:border-accent text-xs p-0 outline-none"
+                            disabled={modalType === 'view'}
+                            step="0.01"
+                          />
+                        )}
                       </div>
                       {modalType !== 'view' && normalizeQuoteItems(formData.items).length > 1 && (
                         <button onClick={() => removeItem(idx)} className="p-1.5 text-danger hover:bg-danger/10 rounded-lg">
@@ -417,7 +563,9 @@ const Quotes = () => {
                       <DollarSign size={16} className="text-accent" /> Total Manifest Value
                     </div>
                     <span className="text-xl font-bold font-mono text-accent">
-                      ${normalizeQuoteItems(formData.items).reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (parseInt(i.qty, 10) || 0), 0).toLocaleString()}
+                      {formData.quoteType === 'vendor'
+                        ? 'N/A'
+                        : `$${normalizeQuoteItems(formData.items).reduce((acc, i) => acc + (parseFloat(i.price) || 0) * (parseInt(i.qty, 10) || 0), 0).toLocaleString()}`}
                     </span>
                   </div>
                 </div>
@@ -507,7 +655,9 @@ const Quotes = () => {
                       <td className="text-center py-3 px-2 font-black italic text-xs opacity-40 leading-none">{item.qty || 1}</td>
                       <td className="text-right py-3 px-2">
                         <span className="text-sm font-black tracking-tighter">
-                          ${(parseFloat(item.price || 0) * parseInt(item.qty || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {selectedQuote.quote_type === 'vendor_request' || selectedQuote.quoteType === 'vendor'
+                            ? 'N/A'
+                            : `$${(parseFloat(item.price || 0) * parseInt(item.qty || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                         </span>
                       </td>
                     </tr>
@@ -521,14 +671,22 @@ const Quotes = () => {
               <div className="w-64">
                 <div className="flex justify-between items-center py-1.5 border-t border-black mb-1.5">
                   <p className="text-[8px] font-black uppercase tracking-tighter opacity-100 italic">Subtotal</p>
-                  <span className="text-sm font-bold italic">${Number(selectedQuote.total_amount || selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="text-sm font-bold italic">
+                    {selectedQuote.quote_type === 'vendor_request' || selectedQuote.quoteType === 'vendor'
+                      ? 'N/A'
+                      : `$${Number(selectedQuote.total_amount || selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center p-3 bg-black text-white rounded-none">
                   <div className="flex flex-col">
                     <p className="text-[6px] font-black uppercase tracking-widest opacity-60">Total Offer Value</p>
                     <p className="text-[7px] font-bold leading-none mt-0.5">Fixed Registry Price</p>
                   </div>
-                  <h3 className="text-xl font-black italic tracking-tighter">${Number(selectedQuote.total_amount || selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD</h3>
+                  <h3 className="text-xl font-black italic tracking-tighter">
+                    {selectedQuote.quote_type === 'vendor_request' || selectedQuote.quoteType === 'vendor'
+                      ? 'N/A'
+                      : `$${Number(selectedQuote.total_amount || selectedQuote.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} USD`}
+                  </h3>
                 </div>
                 <p className="text-[6px] text-gray-400 font-bold italic mt-1.5 text-right uppercase tracking-widest">Valid Until: {(selectedQuote.validity_date || selectedQuote.validity)?.split('T')[0]}</p>
               </div>

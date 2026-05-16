@@ -5,6 +5,7 @@ import Modal from '../../components/Modal';
 import { useData } from '../../context/GlobalDataContext';
 import { Search, Plus, Shield, ShieldCheck, Calendar, Check, X as CloseIcon, Radio, Clock, CheckCircle2, XCircle, Briefcase, Truck, MapPin, Car, FileText } from 'lucide-react';
 import Pagination from '../../components/Common/Pagination';
+import { resolvePortalRole } from '../../utils/authUtils';
 
 const Users = () => {
   const { users, addUser, updateUser, deleteUser, leaveRequests, updateLeaveRequest, staffAssignments, addStaffAssignment, updateAssignment, fetchStaff, reviewStaff, currentUser, payHistory, fetchPayHistory, clients, fetchClients, subscriptionRequests, hasMenuPermission } = useData();
@@ -85,6 +86,22 @@ const Users = () => {
     });
   const currentClients = filteredClients.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
+  const getDisplayRole = (u) => {
+    // Backend sometimes returns SaaS users as `admin`.
+    // We must preserve access, but show `saas_client` identity in admin tables.
+    const resolved = resolvePortalRole(u);
+    if (resolved !== 'admin') return resolved;
+
+    // Fallback: infer SaaS from linked workspace/client (if backend didn't include tenant/client type on user row).
+    const companyId = u?.company_id ?? u?.companyId ?? u?.clientId ?? u?.client_id ?? null;
+    if (companyId && Array.isArray(clients) && clients.length > 0) {
+      const c = clients.find(x => String(x?.id) === String(companyId) || String(x?.client_id) === String(companyId));
+      const ct = String(c?.client_type ?? c?.clientType ?? '').trim().toLowerCase();
+      if (ct === 'saas') return 'saas_client';
+    }
+    return resolved;
+  };
+
   const handleAction = (type, user) => {
     setSelectedUser(user);
     setModalType(type);
@@ -128,7 +145,23 @@ const Users = () => {
         return;
       }
       try {
-        await addUser(formData);
+        const payload = { ...formData };
+        const rawCompanyId = payload.company_id ?? payload.companyId;
+        const parsedCompanyId = Number(rawCompanyId);
+        if (
+          rawCompanyId == null ||
+          String(rawCompanyId).trim() === '' ||
+          !Number.isFinite(parsedCompanyId) ||
+          Number.isNaN(parsedCompanyId) ||
+          parsedCompanyId <= 0
+        ) {
+          delete payload.company_id;
+          delete payload.companyId;
+        } else {
+          payload.company_id = parsedCompanyId;
+          payload.companyId = parsedCompanyId;
+        }
+        await addUser(payload);
         setIsModalOpen(false);
       } catch (err) {
         // error already handled in addUser
@@ -188,7 +221,7 @@ const Users = () => {
       render: (row) => (
         <div className="flex items-center gap-2">
           <Shield size={14} className="text-accent" />
-          <span>{row.role}</span>
+          <span>{getDisplayRole(row)}</span>
         </div>
       )
     },

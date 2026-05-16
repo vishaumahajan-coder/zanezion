@@ -21,13 +21,24 @@ export const normalizeRole = (role) => {
     if (r.includes('concierge')) return 'concierge';
     // 'saas_client' kept for backward compat (old accounts before multi-tenant fix)
     if (r.includes('saas_client') || r.includes('saas client')) return 'saas_client';
-    if (r === 'customer') return 'customer';
-    // 'client' = Business client (approved via website signup)
-    if (r === 'client') return 'client';
+    if (r === 'customer' || r === 'personal_user' || r.includes('personal')) return 'customer';
+    // Business client aliases
+    if (r === 'client' || r === 'business_client' || r === 'business client') return 'client';
     if (r.includes('vendor')) return 'vendor';
     if (r.includes('staff')) return 'staff';
 
     return 'staff';
+};
+
+/**
+ * For SaaS signups some backends still return role='admin'.
+ * Keep same access level, but preserve SaaS identity in UI/routing as 'saas_client'.
+ */
+export const resolvePortalRole = (user) => {
+    const base = normalizeRole(user?.role);
+    // Keep explicit admin users as admin.
+    // Prior behavior remapped SaaS admins to `saas_client`, which reduced/changed portal visibility.
+    return base;
 };
 
 /** Roles allowed to create institutional / manual orders (Order Management modal — not marketplace checkout). */
@@ -39,12 +50,34 @@ const INSTITUTIONAL_ORDER_CREATOR_ROLES = new Set([
     'inventory',
     'concierge',
     'admin',
+    'saas_client',
     'staff',
 ]);
 
 export function roleCanCreateInstitutionalOrder(role) {
     const key = normalizeRole(role);
     return INSTITUTIONAL_ORDER_CREATOR_ROLES.has(key);
+}
+
+/** Who may change order workflow status (OrderModal / API). Not customers or tenant portal users. */
+export function roleCanUpdateOrderStatus(role) {
+    const key = normalizeRole(role);
+    if (['customer', 'client', 'vendor'].includes(key)) return false;
+    return INSTITUTIONAL_ORDER_CREATOR_ROLES.has(key);
+}
+
+/**
+ * Vendor rows shown in shared UI (marketplace checkout, order vendor pickers, inventory partner pickers).
+ * Super Admin sees every row (pending, active, blacklisted). All other roles only see HQ-approved
+ * partners (`status === 'active'`). Blacklisted is never shown outside Super Admin.
+ * Rows with no explicit `status` are not shown (pending until Super Admin sets Active).
+ */
+export function vendorVisibleInSharedLists(vendor, viewerRole) {
+    const key = normalizeRole(viewerRole);
+    if (key === 'superadmin') return true;
+    const st = String(vendor?.status ?? '').trim().toLowerCase();
+    if (st === 'blacklisted') return false;
+    return st === 'active';
 }
 
 export const normalizeMenuPathBase = (path) => {

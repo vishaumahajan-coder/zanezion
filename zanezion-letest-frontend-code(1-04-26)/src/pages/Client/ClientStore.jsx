@@ -1,13 +1,17 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { swalSuccess, swalError, swalWarning, swalInfo, swalConfirm, swalCredentials, swalCopied } from '../../utils/swal';
 import { useData } from '../../context/GlobalDataContext';
-import { ShoppingCart, Search, Store, Plus, Minus, X, Package, DollarSign, FileText, ChevronRight, Zap, Truck, Tag, Trash2, MapPin } from 'lucide-react';
+import { ShoppingCart, Search, Store, Plus, Minus, X, Package, DollarSign, FileText, ChevronRight, Zap, Truck, Tag, Trash2, MapPin, Car } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import CustomDatePicker from '../../components/CustomDatePicker';
-import { MARKETPLACE_CATEGORIES } from '../../utils/data';
+import { localDateISO } from '../../utils/orderWorkflow';
+import { MARKETPLACE_CATEGORIES, canonicalMarketplaceCategory } from '../../utils/data';
+import { normalizeRole } from '../../utils/authUtils';
+import { toAbsoluteImageUrl } from '../../utils/api';
+import { Image as ImageIcon } from 'lucide-react';
 
-const TRANSPORT_EXTRA_FEE = {
+const DEFAULT_TRANSPORT_EXTRA_FEE = {
     Road: 0,
     Sea: 150,
     Air: 300,
@@ -18,9 +22,15 @@ const TRANSPORT_ASSET_OPTIONS = {
     Air: ['Airplane', 'Charter Jet', 'Cargo Plane'],
 };
 
+const CHAUFFEUR_BASE_FEE_USD = Number(import.meta.env?.VITE_CHAUFFEUR_BASE_FEE_USD) || 120;
+const CHAUFFEUR_BILLING_MODE = String(import.meta.env?.VITE_CHAUFFEUR_BILLING_MODE || 'separate').toLowerCase() === 'included'
+    ? 'included'
+    : 'separate';
+
 const ClientStore = () => {
-    const { inventory, cart, addToCart, removeFromCart, clearCart, addOrder, currentUser, clients, vendors, fetchInventory, fetchVendors } = useData();
+    const { inventory, cart, addToCart, removeFromCart, clearCart, addOrder, currentUser, clients, vendors, marketplaceVendors, shippingModePricing, fetchInventory, fetchVendors, systemSettings, fetchSystemSettings } = useData();
     const location = useLocation();
+    const navigate = useNavigate();
     /** Simplified: primary marketplace + optional custom request for personal accounts */
     const [activeTab, setActiveTab] = useState('catalog');
     const [customItems, setCustomItems] = useState([{ name: '', qty: 1, price: 0 }]);
@@ -33,7 +43,7 @@ const ClientStore = () => {
     const [bookChauffeur, setBookChauffeur] = useState(false);
     const [transportAsset, setTransportAsset] = useState('');
     const [islandLocation, setIslandLocation] = useState('');
-    const [orderPlacementDate, setOrderPlacementDate] = useState(() => new Date().toISOString().split('T')[0]);
+    const [orderPlacementDate, setOrderPlacementDate] = useState(() => localDateISO());
     const [customRequestSubtype, setCustomRequestSubtype] = useState('');
     /** 'all' | store group key from inventoryByStore */
     const [catalogStoreFilter, setCatalogStoreFilter] = useState('all');
@@ -41,14 +51,27 @@ const ClientStore = () => {
     const [personalNotes, setPersonalNotes] = useState('');
     const [deliveryInstructions, setDeliveryInstructions] = useState('');
     const [transportAssetCustom, setTransportAssetCustom] = useState('');
+    const [paymentMethod, setPaymentMethod] = useState('wallet');
+    const [authorizeCharge, setAuthorizeCharge] = useState(false);
+    /** Estimated one-way distance for personal document/package pickup & delivery pricing (admin: base + per km). */
+    const [customRequestDistanceKm, setCustomRequestDistanceKm] = useState('');
 
     React.useEffect(() => {
         fetchInventory();
         fetchVendors();
-    }, [fetchInventory, fetchVendors]);
+        fetchSystemSettings();
+    }, [fetchInventory, fetchVendors, fetchSystemSettings]);
 
     const userPortalRole = String(currentUser?.role || '').toLowerCase().replace(/\s+/g, '');
     const isRetailPersonal = userPortalRole === 'customer';
+    const roleKey = normalizeRole(currentUser?.role);
+    const canDirectManageMarketplaceInventory = ['client', 'saas_client', 'admin', 'superadmin', 'inventory', 'procurement'].includes(roleKey);
+
+    React.useEffect(() => {
+        if (!isRetailPersonal && activeTab === 'sheet') {
+            setActiveTab('catalog');
+        }
+    }, [isRetailPersonal, activeTab]);
 
     React.useEffect(() => {
         const params = new URLSearchParams(location.search);
@@ -69,10 +92,39 @@ const ClientStore = () => {
     const filteredInventory = marketplaceInventory.filter(item => {
         const q = searchTerm.toLowerCase();
         const matchQ = !q || item.name.toLowerCase().includes(q) || String(item.category || '').toLowerCase().includes(q);
-        const cat = String(item.category || 'General');
+        const cat = canonicalMarketplaceCategory(item.category);
         const matchCat = productCategoryFilter === 'all' || cat === productCategoryFilter;
         return matchQ && matchCat;
     });
+
+    const catalogShowAllPartnerItems = normalizeRole(currentUser?.role) === 'superadmin';
+
+    const approvedPartnerNumericIds = useMemo(() => {
+        const s = new Set();
+        for (const v of marketplaceVendors || []) {
+            const n = parseInt(String(v?.id).replace(/\D/g, ''), 10);
+            if (!Number.isNaN(n)) s.add(n);
+        }
+        return s;
+    }, [marketplaceVendors]);
+
+    const catalogInventory = useMemo(() => {
+        if (catalogShowAllPartnerItems) return filteredInventory;
+        const partners = marketplaceVendors || [];
+        return filteredInventory.filter((item) => {
+            const raw = item?.vendor_id ?? item?.vendorId;
+            if (raw != null && raw !== '') {
+                const n = parseInt(String(raw).replace(/\D/g, ''), 10);
+                if (!Number.isNaN(n)) return approvedPartnerNumericIds.has(n);
+            }
+            const nm = String(item?.vendorName || item?.vendor_name || '').trim();
+            if (!nm) return true;
+            return partners.some((x) => {
+                const label = String(x.name || x.vendor_name || x.business_name || '').trim().toLowerCase();
+                return label && label === nm.toLowerCase();
+            });
+        });
+    }, [filteredInventory, catalogShowAllPartnerItems, approvedPartnerNumericIds, marketplaceVendors]);
 
     const resolveVendorIdForItem = (item) => {
         const raw = item?.vendor_id ?? item?.vendorId;
@@ -82,7 +134,10 @@ const ClientStore = () => {
         }
         const nm = String(item?.vendorName || item?.vendor_name || '').trim();
         if (nm && vendors?.length) {
-            const v = vendors.find(x => String(x.name || '').toLowerCase() === nm.toLowerCase());
+            const v = vendors.find((x) => {
+                const label = String(x.name || x.vendor_name || x.business_name || '').trim().toLowerCase();
+                return label && label === nm.toLowerCase();
+            });
             if (v?.id != null) {
                 const n = parseInt(String(v.id).replace(/\D/g, ''), 10);
                 return Number.isNaN(n) ? null : n;
@@ -104,7 +159,7 @@ const ClientStore = () => {
 
     const inventoryByStore = useMemo(() => {
         const groups = new Map();
-        for (const item of filteredInventory) {
+        for (const item of catalogInventory) {
             const vid = resolveVendorIdForItem(item);
             const label =
                 String(item.vendorName || item.vendor_name || '').trim()
@@ -117,7 +172,7 @@ const ClientStore = () => {
             groups.get(key).items.push(item);
         }
         return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
-    }, [filteredInventory, vendors]);
+    }, [catalogInventory, vendors]);
 
     const catalogSections = catalogStoreFilter === 'all'
         ? inventoryByStore
@@ -140,20 +195,17 @@ const ClientStore = () => {
     }, [cart, vendors]);
 
     const checkoutVendorOptions = useMemo(() => {
-        if (!Array.isArray(vendors) || vendors.length === 0) return [];
+        if (!Array.isArray(marketplaceVendors) || marketplaceVendors.length === 0) return [];
         const matchCartId = (v, cid) => {
             const n = parseInt(String(v.id).replace(/\D/g, ''), 10);
             return cid === n || String(cid) === String(v.id);
         };
-        if (cartVendorIds.length === 1) {
-            const row = vendors.find((v) => matchCartId(v, cartVendorIds[0]));
-            return row ? [row] : vendors;
-        }
         if (cartVendorIds.length > 1) {
-            return vendors.filter((v) => cartVendorIds.some((cid) => matchCartId(v, cid)));
+            return marketplaceVendors.filter((v) => cartVendorIds.some((cid) => matchCartId(v, cid)));
         }
-        return vendors;
-    }, [vendors, cartVendorIds]);
+        // Single-store or unknown vendor on lines: HQ-approved partners only
+        return marketplaceVendors;
+    }, [marketplaceVendors, cartVendorIds]);
 
     useEffect(() => {
         if (activeTab !== 'catalog') return;
@@ -175,7 +227,7 @@ const ClientStore = () => {
                 return '';
             });
         }
-    }, [activeTab, cart]);
+    }, [activeTab, cart, vendors]);
 
     useEffect(() => {
         if (deliveryMode === 'Sea' && !transportAsset) {
@@ -195,11 +247,41 @@ const ClientStore = () => {
         setCustomItems(newItems);
     };
 
+    const adminDeliveryBaseUsd = useMemo(() => {
+        const raw = systemSettings?.delivery_base_price ?? systemSettings?.deliveryBasePrice;
+        const n = parseFloat(raw);
+        return Number.isFinite(n) && n >= 0 ? n : 25;
+    }, [systemSettings]);
+    const adminPerKmUsd = useMemo(() => {
+        const raw = systemSettings?.per_km_charges ?? systemSettings?.perKmCharges;
+        const n = parseFloat(raw);
+        return Number.isFinite(n) && n >= 0 ? n : 2.5;
+    }, [systemSettings]);
+
+    const isPersonalPickupDeliveryRequest =
+        isRetailPersonal
+        && activeTab === 'sheet'
+        && (customRequestSubtype === 'document_pickup_delivery' || customRequestSubtype === 'package_pickup_delivery');
+
+    const personalPickupDeliveryServiceTotal = useMemo(() => {
+        if (!isPersonalPickupDeliveryRequest) return 0;
+        const km = Math.max(0, parseFloat(String(customRequestDistanceKm).replace(',', '.')) || 0);
+        return Number((adminDeliveryBaseUsd + adminPerKmUsd * km).toFixed(2));
+    }, [isPersonalPickupDeliveryRequest, customRequestDistanceKm, adminDeliveryBaseUsd, adminPerKmUsd]);
+
     const cartSubtotal = activeTab === 'catalog'
         ? cart.reduce((acc, item) => acc + (item.price * item.qty), 0)
-        : customItems.reduce((acc, item) => acc + (parseFloat(item.price || 0) * (parseInt(item.qty) || 0)), 0);
-    const transportExtraFee = TRANSPORT_EXTRA_FEE[deliveryMode] || 0;
-    const estimatedGrandTotal = cartSubtotal + transportExtraFee;
+        : isPersonalPickupDeliveryRequest
+            ? personalPickupDeliveryServiceTotal
+            : customItems.reduce((acc, item) => acc + (parseFloat(item.price || 0) * (parseInt(item.qty) || 0)), 0);
+    const transportExtraFee = Number(
+        shippingModePricing?.[deliveryMode]
+        ?? DEFAULT_TRANSPORT_EXTRA_FEE[deliveryMode]
+        ?? 0
+    ) || 0;
+    const chauffeurFee = bookChauffeur ? CHAUFFEUR_BASE_FEE_USD : 0;
+    const chauffeurFeeIncludedInCheckout = CHAUFFEUR_BILLING_MODE === 'included';
+    const estimatedGrandTotal = cartSubtotal + transportExtraFee + (chauffeurFeeIncludedInCheckout ? chauffeurFee : 0);
 
     const myClient = (clients || []).find(c => {
         const cId = String(c.id).replace('CLT-', '');
@@ -223,7 +305,7 @@ const ClientStore = () => {
             items = [{
                 name: `${String(customRequestSubtype || 'request').replace(/_/g, ' ')} — ${line}`,
                 qty: 1,
-                price: 0,
+                price: personalPickupDeliveryServiceTotal,
                 custom: true,
             }];
         }
@@ -252,10 +334,13 @@ const ClientStore = () => {
             swalWarning('Select transport asset', `Choose a ${deliveryMode === 'Sea' ? 'boat' : 'airplane'} option or describe a custom vessel / aircraft below.`);
             return;
         }
+        /* 
+        // Island/Location and Transport Asset details are now optional per user request to streamline marketplace checkout.
         if ((deliveryMode === 'Sea' || deliveryMode === 'Air') && !String(islandLocation || '').trim()) {
             swalWarning('Island/Location required', 'For sea/air dispatch, please enter the island or delivery location.');
             return;
         }
+        */
 
         const orderKind = isBespoke ? 'custom_request' : 'marketplace';
         const typeLabel = isBespoke
@@ -298,6 +383,8 @@ const ClientStore = () => {
             island_location: islandLocation || null,
             delivery_instructions: deliveryInstructions?.trim() || null,
             transport_fee: transportExtraFee,
+            chauffeur_fee: chauffeurFee,
+            chauffeur_fee_mode: chauffeurFeeIncludedInCheckout ? 'included' : 'separate',
             subtotal: Number(cartSubtotal.toFixed(2)),
             estimated_total: Number(estimatedGrandTotal.toFixed(2)),
             location: deliveryAddress.trim(),
@@ -314,7 +401,14 @@ const ClientStore = () => {
             book_chauffeur: bookChauffeur,
             custom_request_category: isBespoke ? `${customRequestSubtype}_${deliveryMode.toLowerCase()}` : undefined,
             customRequestCategory: isBespoke ? `${customRequestSubtype}_${deliveryMode.toLowerCase()}` : undefined,
+            payment_method: paymentMethod,
+            payment_authorized: !!authorizeCharge,
         };
+
+        if (isRetailPersonal && !authorizeCharge) {
+            swalWarning('Payment authorization required', 'Please authorize the automatic charge before placing this order.');
+            return;
+        }
 
         const result = await addOrder(orderPayload, { silentUi: true, customerCheckout: true });
         if (!result?.ok) {
@@ -323,14 +417,24 @@ const ClientStore = () => {
         }
 
         if (activeTab === 'catalog') clearCart();
-        else setCustomItems([{ name: '', qty: 1, price: 0 }]);
+        else {
+            setCustomItems([{ name: '', qty: 1, price: 0 }]);
+            setCustomRequestDistanceKm('');
+        }
 
         setIsCartOpen(false);
 
         const totalStr = `$${estimatedGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 
         if (isRetailPersonal) {
-            swalSuccess('Order placed & charged', `Payment authorised (${totalStr}) for order #${result.id}. Connect Stripe for live capture. Chauffeur and membership fees bill separately where applicable.`);
+            if (result?.charged === false) {
+                swalWarning(
+                    'Order placed, payment pending',
+                    `Order #${result.id} was created but auto-charge did not complete via ${paymentMethod}. ${result?.chargeError || 'Please complete payment from billing.'}`
+                );
+            } else {
+                swalSuccess('Order placed & charged', `Payment authorised via ${paymentMethod} (${totalStr}) for order #${result.id}. Chauffeur and membership fees bill separately where applicable.`);
+            }
         } else {
             swalSuccess('Order submitted', `Order #${result.id} sent for fulfilment (${totalStr}).`);
         }
@@ -349,6 +453,15 @@ const ClientStore = () => {
                     <p className="text-secondary text-[10px] sm:text-xs mt-4 font-black uppercase tracking-[0.4em] opacity-80 italic">Global Logistics & Bespoke Procurement Network</p>
                 </div>
                 <div className="flex items-center gap-4">
+                    {canDirectManageMarketplaceInventory && (
+                        <button
+                            type="button"
+                            onClick={() => navigate('/dashboard/inventory?action=entry&type=Marketplace')}
+                            className="px-5 py-3 rounded-2xl border border-white/10 text-[10px] font-black uppercase tracking-widest text-white hover:bg-white/10 transition-all"
+                        >
+                            + Add Marketplace Item
+                        </button>
+                    )}
                     <div className="hidden lg:flex flex-col items-end px-6 border-r border-white/10">
                         <span className="text-[10px] font-black text-muted uppercase tracking-widest">Client Identity</span>
                         <span className="text-sm font-bold text-accent uppercase italic">{currentUser?.name || 'Client'}</span>
@@ -376,39 +489,55 @@ const ClientStore = () => {
                     Elite Catalog
                 </button>
                 {isRetailPersonal && (
-                <button
-                    onClick={() => setActiveTab('sheet')}
-                    className={`px-8 py-3.5 rounded-[2rem] text-[10px] font-black uppercase tracking-[0.2em] transition-all ${activeTab === 'sheet' ? 'bg-accent text-black shadow-xl shadow-accent/20' : 'text-muted hover:text-white'}`}
-                >
-                    Personal Custom Request
-                </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('sheet')}
+                        className={`px-8 py-3.5 rounded-[2rem] text-[10px] font-black uppercase tracking-[0.2em] transition-all ${activeTab === 'sheet' ? 'bg-accent text-black shadow-xl shadow-accent/20' : 'text-muted hover:text-white border border-white/10 hover:border-accent/40 hover:bg-white/5'}`}
+                    >
+                        Custom Request
+                    </button>
+                )}
                 )}
             </div>
 
             {activeTab === 'catalog' ? (
                 <div className="space-y-8">
                     <div className="flex flex-col gap-3">
-                        <p className="text-[10px] font-black text-muted uppercase tracking-[0.25em]">Browse by store</p>
-                        <div className="flex flex-wrap gap-2">
-                            <button
-                                type="button"
-                                onClick={() => setCatalogStoreFilter('all')}
-                                className={`inline-flex items-center gap-2 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all ${catalogStoreFilter === 'all' ? 'bg-accent text-black border-accent' : 'bg-white/[0.03] border-white/10 text-muted hover:text-white'}`}
-                            >
-                                <Store size={14} /> All stores
-                            </button>
-                            {inventoryByStore.map((g) => (
+                        <div className="flex items-center justify-between">
+                            <p className="text-[10px] font-black text-muted uppercase tracking-[0.25em]">
+                                {catalogStoreFilter === 'all' ? 'Select a boutique to browse' : 'Browsing Boutique'}
+                            </p>
+                            {catalogStoreFilter !== 'all' && (
+                                <button
+                                    onClick={() => setCatalogStoreFilter('all')}
+                                    className="text-[10px] font-black text-accent uppercase tracking-widest hover:underline flex items-center gap-1"
+                                >
+                                    <ChevronRight size={12} className="rotate-180" /> Back to all stores
+                                </button>
+                            )}
+                        </div>
+                        {catalogStoreFilter !== 'all' && (
+                            <div className="flex flex-wrap gap-2">
                                 <button
                                     type="button"
-                                    key={g.key}
-                                    onClick={() => setCatalogStoreFilter(g.key)}
-                                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all ${catalogStoreFilter === g.key ? 'bg-accent text-black border-accent' : 'bg-white/[0.03] border-white/10 text-muted hover:text-white'}`}
+                                    onClick={() => setCatalogStoreFilter('all')}
+                                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all ${catalogStoreFilter === 'all' ? 'bg-accent text-black border-accent' : 'bg-white/[0.03] border-white/10 text-muted hover:text-white'}`}
                                 >
-                                    {g.label}
-                                    <span className="opacity-70 tabular-nums">({g.items.length})</span>
+                                    <Store size={14} /> All boutiques
                                 </button>
-                            ))}
-                        </div>
+                                {inventoryByStore.map((g) => (
+                                    <button
+                                        type="button"
+                                        key={g.key}
+                                        onClick={() => setCatalogStoreFilter(g.key)}
+                                        className={`inline-flex items-center gap-2 px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all ${catalogStoreFilter === g.key ? 'bg-accent text-black border-accent' : 'bg-white/[0.03] border-white/10 text-muted hover:text-white'}`}
+                                    >
+                                        {g.label}
+                                        <span className="opacity-70 tabular-nums">({g.items.length})</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex flex-col gap-3">
@@ -439,36 +568,119 @@ const ClientStore = () => {
                             <Search size={64} strokeWidth={1} className="text-muted" />
                             <p className="text-sm font-black uppercase tracking-[0.3em]">No Assets Match Protocol</p>
                         </div>
-                    ) : (
-                        catalogSections.map((group, gi) => (
-                            <div key={group.key} className={`space-y-4 ${gi > 0 ? 'pt-8 border-t border-white/5' : ''}`}>
-                                <div className="flex items-start gap-3">
-                                    <div className="w-11 h-11 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
-                                        <Store size={22} className="text-accent" />
+                    ) : catalogStoreFilter === 'all' ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {inventoryByStore.map((group) => (
+                                <div
+                                    key={group.key}
+                                    onClick={() => setCatalogStoreFilter(group.key)}
+                                    className="bg-white/[0.02] border border-white/5 rounded-[2rem] p-8 hover:border-accent/40 hover:bg-white/[0.04] transition-all cursor-pointer group relative overflow-hidden"
+                                >
+                                    <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                                        <Store size={120} />
                                     </div>
-                                    <div>
-                                        <h2 className="text-lg sm:text-xl font-black text-white uppercase italic tracking-tight">{group.label}</h2>
-                                        <p className="text-[9px] font-bold text-muted uppercase tracking-widest mt-0.5">
-                                            Store catalogue · {group.items.length} item{group.items.length !== 1 ? 's' : ''}
-                                        </p>
+                                    <div className="relative z-10 space-y-4">
+                                        <div className="w-16 h-16 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent group-hover:scale-110 transition-transform">
+                                            <Store size={32} />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-2xl font-black text-white uppercase italic">{group.label}</h3>
+                                            <p className="text-[10px] font-black text-muted uppercase tracking-[0.2em] mt-1">{group.items.length} Curated Assets</p>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-accent text-[10px] font-black uppercase tracking-widest">
+                                            Enter Boutique <ChevronRight size={14} />
+                                        </div>
                                     </div>
                                 </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+                            ))}
+                        </div>
+                    ) : (
+                        catalogSections.map((group, gi) => (
+                            <div key={group.key} className={`space-y-6 ${gi > 0 ? 'pt-8 border-t border-white/5' : ''}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-start gap-4">
+                                        <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
+                                            <Store size={28} className="text-accent" />
+                                        </div>
+                                        <div>
+                                            <h2 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight">{group.label}</h2>
+                                            <p className="text-[10px] font-bold text-muted uppercase tracking-[0.3em] mt-1">
+                                                Elite Partner Store · {group.items.length} Asset{group.items.length !== 1 ? 's' : ''} Available
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 sm:gap-8">
                                     {group.items.map((item) => (
                                         <div
                                             key={item.id}
-                                            className="bg-white/[0.02] border border-white/5 rounded-3xl overflow-hidden group hover:border-accent/30 transition-all duration-500 shadow-xl"
+                                            className="bg-white/[0.02] border border-white/5 rounded-[2.5rem] overflow-hidden group hover:border-accent/30 transition-all duration-500 shadow-2xl flex flex-col"
                                         >
-                                            <div className="aspect-[4/3] sm:aspect-square bg-white/5 border-b border-white/5 flex items-center justify-center relative">
-                                                <Package size={48} className="text-accent/20 group-hover:text-accent/40 group-hover:scale-110 transition-all duration-700" />
-                                                <div className="absolute top-4 right-4 px-3 py-1.5 bg-background/80 backdrop-blur-md border border-white/10 rounded-xl text-xs font-black text-accent shadow-2xl">
+                                            <div className="aspect-square bg-white/5 border-b border-white/5 flex items-center justify-center relative overflow-hidden">
+                                                {item.image && (
+                                                    <img
+                                                        src={toAbsoluteImageUrl(item.image)}
+                                                        alt={item.name}
+                                                        className="w-full h-full object-cover group-hover:scale-110 transition-all duration-700"
+                                                        onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'block'; }}
+                                                    />
+                                                )}
+                                                <div className={item.image ? "hidden" : "block"}>
+                                                    <Package size={64} className="text-accent/10 group-hover:text-accent/20 group-hover:scale-110 transition-all duration-700" />
+                                                </div>
+                                                <div className="absolute top-6 right-6 px-4 py-2 bg-background/90 backdrop-blur-md border border-accent/20 rounded-2xl text-sm font-black text-accent shadow-2xl z-10">
                                                     ${parseFloat(item.price).toLocaleString()}
                                                 </div>
+                                                {item.category && (
+                                                    <div className="absolute top-6 left-6 px-3 py-1 bg-white/10 backdrop-blur-md border border-white/10 rounded-xl text-[9px] font-black text-white uppercase tracking-widest z-10">
+                                                        {item.category}
+                                                    </div>
+                                                )}
                                             </div>
 
-                                            <div className="p-4 sm:p-5">
-                                                <h3 className="font-extrabold text-white truncate text-sm sm:text-base group-hover:text-accent transition-colors italic">{item.name}</h3>
-                                                <p className="text-[9px] sm:text-[10px] text-muted uppercase font-black tracking-widest mt-1 opacity-60">{item.category || 'Marketplace'} <span className="mx-2 text-white/10">•</span> {item.location}</p>
+                                            <div className="p-6 flex-1 flex flex-col">
+                                                <div className="flex-1 space-y-4">
+                                                    <div>
+                                                        <h3 className="font-black text-white text-lg group-hover:text-accent transition-colors italic leading-tight">{item.name}</h3>
+                                                        {item.description && (
+                                                            <p className="text-[11px] text-secondary mt-2 line-clamp-2 leading-relaxed font-medium">
+                                                                {item.description}
+                                                            </p>
+                                                        )}
+                                                    </div>
+
+                                                    {(item.size || item.color || item.material) && (
+                                                        <div className="grid grid-cols-2 gap-3 py-3 border-y border-white/5">
+                                                            {item.size && (
+                                                                <div className="space-y-0.5">
+                                                                    <p className="text-[8px] font-black text-muted uppercase tracking-widest">Size</p>
+                                                                    <p className="text-[10px] font-bold text-white uppercase">{item.size}</p>
+                                                                </div>
+                                                            )}
+                                                            {item.color && (
+                                                                <div className="space-y-0.5">
+                                                                    <p className="text-[8px] font-black text-muted uppercase tracking-widest">Color</p>
+                                                                    <p className="text-[10px] font-bold text-white uppercase">{item.color}</p>
+                                                                </div>
+                                                            )}
+                                                            {item.material && (
+                                                                <div className="space-y-0.5 col-span-2">
+                                                                    <p className="text-[8px] font-black text-muted uppercase tracking-widest">Material</p>
+                                                                    <p className="text-[10px] font-bold text-white uppercase">{item.material}</p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {item.specifications && (
+                                                        <div className="flex items-center gap-2">
+                                                            <Zap size={10} className="text-accent" />
+                                                            <p className="text-[9px] font-black text-accent uppercase tracking-widest truncate">
+                                                                {item.specifications}
+                                                            </p>
+                                                        </div>
+                                                    )}
+                                                </div>
 
                                                 <button
                                                     type="button"
@@ -478,9 +690,9 @@ const ClientStore = () => {
                                                         vendorName: item.vendorName || item.vendor_name || group.label,
                                                         vendor_id: item.vendor_id ?? item.vendorId ?? group.vendorId ?? null,
                                                     })}
-                                                    className="w-full mt-5 py-3.5 sm:py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-accent hover:text-black hover:border-accent transition-all flex items-center justify-center gap-3 active:scale-[0.98]"
+                                                    className="w-full mt-6 py-4 bg-white/[0.03] border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-[0.25em] hover:bg-accent hover:text-black hover:border-accent transition-all flex items-center justify-center gap-3 active:scale-[0.98] shadow-lg shadow-black/20"
                                                 >
-                                                    <Plus size={14} /> Add to Manifest
+                                                    <Plus size={14} /> {isRetailPersonal ? 'Add to order' : 'Add to Manifest'}
                                                 </button>
                                             </div>
                                         </div>
@@ -515,12 +727,12 @@ const ClientStore = () => {
                             </div>
                         </div>
                         {!isRetailPersonal && (
-                        <button
-                            onClick={addCustomRow}
-                            className="w-full lg:w-auto px-8 py-4 bg-accent/10 border border-accent/30 rounded-2xl text-accent text-[10px] font-black uppercase tracking-[0.25em] hover:bg-accent hover:text-black transition-all flex items-center justify-center gap-3 shadow-xl shadow-accent/5 group"
-                        >
-                            <Plus size={16} className="group-hover:rotate-90 transition-transform" /> ADD LINE ITEM
-                        </button>
+                            <button
+                                onClick={addCustomRow}
+                                className="w-full lg:w-auto px-8 py-4 bg-accent/10 border border-accent/30 rounded-2xl text-accent text-[10px] font-black uppercase tracking-[0.25em] hover:bg-accent hover:text-black transition-all flex items-center justify-center gap-3 shadow-xl shadow-accent/5 group"
+                            >
+                                <Plus size={16} className="group-hover:rotate-90 transition-transform" /> ADD LINE ITEM
+                            </button>
                         )}
                     </div>
 
@@ -558,7 +770,27 @@ const ClientStore = () => {
                                     className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none"
                                     placeholder="Describe what to pick up or deliver, time windows, contact on site, special handling…"
                                 />
-                                <p className="text-[9px] text-muted font-bold uppercase tracking-widest">Document pickup is optional; package moves use the same form. Book chauffeur below or from the task bar after placing this request.</p>
+                                <p className="text-[9px] text-muted font-bold uppercase tracking-widest">Document pickup is optional; package moves use the same form. Use the task bar for other concierge requests after placing this requisition.</p>
+                                {(customRequestSubtype === 'document_pickup_delivery' || customRequestSubtype === 'package_pickup_delivery') && (
+                                    <div className="space-y-2 pt-2 border-t border-white/10">
+                                        <label className="text-[10px] font-black text-muted uppercase tracking-widest">Estimated distance (km)</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.1"
+                                            inputMode="decimal"
+                                            value={customRequestDistanceKm}
+                                            onChange={(e) => setCustomRequestDistanceKm(e.target.value)}
+                                            placeholder="e.g. 12"
+                                            className="w-full max-w-xs bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold"
+                                        />
+                                        <p className="text-[10px] text-secondary font-bold leading-relaxed">
+                                            Service estimate: ${adminDeliveryBaseUsd.toFixed(2)} base + {(Math.max(0, parseFloat(String(customRequestDistanceKm).replace(',', '.')) || 0)).toFixed(1)} km × ${adminPerKmUsd.toFixed(2)}/km ={' '}
+                                            <span className="text-accent">${personalPickupDeliveryServiceTotal.toFixed(2)}</span>
+                                            <span className="text-muted font-semibold normal-case"> (from admin settings)</span>
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         ) : null}
                         <div className="space-y-4">
@@ -674,16 +906,42 @@ const ClientStore = () => {
                                     className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none resize-none"
                                 />
                             </div>
-                            <label className="flex items-center gap-3 cursor-pointer group px-2">
-                                <input
-                                    type="checkbox"
-                                    className="w-4 h-4 rounded border-border bg-background accent-accent"
-                                    checked={bookChauffeur}
-                                    onChange={(e) => setBookChauffeur(e.target.checked)}
-                                />
-                                <span className="text-[10px] font-bold text-secondary uppercase group-hover:text-white transition-colors tracking-widest">Book Chauffeur (billed separately)</span>
-                            </label>
-                            {vendors?.length > 0 && (
+
+
+                            {isRetailPersonal && (
+                                <div className="p-5 rounded-[2rem] border border-accent/25 bg-accent/[0.04] space-y-4">
+                                    <p className="text-[10px] font-black text-accent uppercase tracking-[0.2em]">Payment authorization</p>
+                                    {/* auto-fit uses card width (not viewport), so labels never sit in too-narrow columns */}
+                                    <div className="grid w-full min-w-0 gap-2 [grid-template-columns:repeat(auto-fit,minmax(7.25rem,1fr))]">
+                                        {[
+                                            { id: 'wallet', label: 'Wallet' },
+                                            { id: 'card', label: 'Card' },
+                                            { id: 'bank', label: 'Bank' },
+                                        ].map((m) => (
+                                            <button
+                                                key={m.id}
+                                                type="button"
+                                                onClick={() => setPaymentMethod(m.id)}
+                                                className={`w-full min-w-0 max-w-full min-h-[44px] box-border inline-flex items-center justify-center px-4 py-2.5 rounded-2xl text-[11px] font-bold uppercase tracking-normal text-center whitespace-normal leading-snug border transition-all break-words [overflow-wrap:anywhere] ${paymentMethod === m.id ? 'bg-accent text-black border-accent' : 'bg-white/[0.03] border-white/10 text-muted hover:text-white'}`}
+                                            >
+                                                {m.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <label className="flex items-start gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            className="w-4 h-4 rounded border-border accent-accent mt-0.5"
+                                            checked={authorizeCharge}
+                                            onChange={(e) => setAuthorizeCharge(e.target.checked)}
+                                        />
+                                        <span className="text-[10px] text-secondary font-bold leading-relaxed group-hover:text-white transition-colors">
+                                            I authorize immediate charge for this custom request total.
+                                        </span>
+                                    </label>
+                                </div>
+                            )}
+                            {marketplaceVendors?.length > 0 && (
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black text-muted uppercase tracking-widest ml-1">Vendor preference</label>
                                     <select
@@ -692,7 +950,7 @@ const ClientStore = () => {
                                         className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/40 outline-none"
                                     >
                                         <option value="">ZaneZion assigns best partner</option>
-                                        {vendors.map((v) => (
+                                        {marketplaceVendors.map((v) => (
                                             <option key={v.id} value={String(v.id)}>
                                                 {(v.name || 'Vendor')} {v.category ? `— ${v.category}` : ''}
                                             </option>
@@ -817,9 +1075,16 @@ const ClientStore = () => {
                             <div className="p-6 sm:p-8 border-b border-white/5 flex items-center justify-between shrink-0 bg-gradient-to-br from-white/[0.02] to-transparent">
                                 <div className="space-y-1">
                                     <h3 className="text-xl font-extrabold flex items-center gap-3 text-white">
-                                        <ShoppingCart size={22} className="text-accent" /> Checkout <span className="text-accent">Manifest</span>
+                                        <ShoppingCart size={22} className="text-accent" />{' '}
+                                        {isRetailPersonal ? (
+                                            <>Create <span className="text-accent">order</span></>
+                                        ) : (
+                                            <>Checkout <span className="text-accent">Manifest</span></>
+                                        )}
                                     </h3>
-                                    <p className="text-[9px] font-black text-muted uppercase tracking-[0.3em]">Institutional Procurement</p>
+                                    <p className="text-[9px] font-black text-muted uppercase tracking-[0.3em]">
+                                        {isRetailPersonal ? 'Review cart & vendor, then place order' : 'Institutional Procurement'}
+                                    </p>
                                 </div>
                                 <button onClick={() => setIsCartOpen(false)} className="w-12 h-12 flex items-center justify-center hover:bg-white/5 rounded-2xl text-muted transition-all border border-transparent hover:border-white/10 hover:text-white">
                                     <X size={24} />
@@ -828,29 +1093,33 @@ const ClientStore = () => {
 
                             {/* Single scroll region: cart lines + checkout controls (footer was stealing flex space and clipping items) */}
                             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-8 pb-8 space-y-6 custom-scrollbar bg-[radial-gradient(circle_at_top_right,rgba(200,169,106,0.03),transparent)] border-t border-transparent">
-                                {cart.length > 0 && (checkoutVendorOptions.length > 0 || cartStoreKeys.length > 1) && (
+                                {cart.length > 0 && checkoutVendorOptions.length > 0 && (
                                     <div className="p-4 rounded-2xl border border-accent/25 bg-accent/[0.06] space-y-3 shrink-0">
                                         <div className="flex items-center gap-2">
                                             <Store size={18} className="text-accent shrink-0" />
-                                            <p className="text-[10px] font-black text-accent uppercase tracking-[0.2em]">Fulfilment store — confirm on this screen</p>
+                                            <p className="text-[10px] font-black text-accent uppercase tracking-[0.2em]">
+                                                {isRetailPersonal ? 'Vendor for this order' : 'Fulfilment store — confirm on this screen'}
+                                            </p>
                                         </div>
                                         {(cartVendorIds.length > 1 || cartStoreKeys.length > 1) ? (
                                             <p className="text-[10px] text-warning font-bold leading-relaxed">
-                                                Your manifest mixes multiple stores. Select which partner fulfils this order before dispatch — no need to visit Order History first.
+                                                Your cart mixes multiple stores. Choose which vendor fulfils this order before you continue.
                                             </p>
                                         ) : (
-                                            <p className="text-[10px] text-muted font-bold uppercase tracking-wide">
-                                                Locked to your catalogue selections — adjust only if your assigned support team changes the fulfilment partner.
+                                            <p className="text-[10px] text-muted font-bold leading-relaxed">
+                                                {isRetailPersonal
+                                                    ? 'Pick the partner you want to fulfil this order, or leave as default to match your catalogue store.'
+                                                    : 'Adjust only if your team assigns a different fulfilment partner.'}
                                             </p>
                                         )}
-                                        <label className="text-[9px] font-black text-muted uppercase tracking-widest block">Store / vendor</label>
+                                        <label className="text-[9px] font-black text-muted uppercase tracking-widest block">Vendor / store</label>
                                         <select
                                             value={checkoutVendorId}
                                             onChange={(e) => setCheckoutVendorId(e.target.value)}
                                             className="w-full bg-background border border-white/15 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold"
                                         >
                                             <option value="">
-                                                {(cartVendorIds.length > 1 || cartStoreKeys.length > 1) ? 'Choose store for this order…' : 'Platform assigns best partner (optional)'}
+                                                {(cartVendorIds.length > 1 || cartStoreKeys.length > 1) ? 'Choose vendor for this order…' : (isRetailPersonal ? 'Use catalogue store (default)' : 'Platform assigns best partner (optional)')}
                                             </option>
                                             {checkoutVendorOptions.map((v) => (
                                                 <option key={v.id} value={String(v.id)}>{v.name || 'Partner'}{v.category ? ` — ${v.category}` : ''}</option>
@@ -902,149 +1171,178 @@ const ClientStore = () => {
                                                 <Package size={48} strokeWidth={1} />
                                             </div>
                                             <div className="space-y-2">
-                                                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-muted italic">Manifest is Empty</p>
-                                                <p className="text-[10px] text-muted/40 uppercase tracking-widest max-w-[180px]">Requisition required to proceed with logistics portal.</p>
+                                                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-muted italic">{isRetailPersonal ? 'Cart is empty' : 'Manifest is Empty'}</p>
+                                                <p className="text-[10px] text-muted/40 uppercase tracking-widest max-w-[180px]">{isRetailPersonal ? 'Add items from the catalogue to create an order.' : 'Requisition required to proceed with logistics portal.'}</p>
                                             </div>
                                         </div>
                                     )}
                                 </div>
 
                                 <div className="border-t border-white/10 pt-6 space-y-6 relative">
-                                <div className="absolute top-0 right-0 w-40 h-40 bg-accent/5 blur-[80px] -mr-20 -mt-20 pointer-events-none" />
+                                    <div className="absolute top-0 right-0 w-40 h-40 bg-accent/5 blur-[80px] -mr-20 -mt-20 pointer-events-none" />
 
-                                <div className="space-y-4 relative">
-                                    <div className="flex items-center justify-between ml-1">
-                                        <p className="text-[10px] font-black text-accent uppercase tracking-[0.3em]">Logistics Protocol</p>
-                                        <span className="text-[8px] text-muted font-black uppercase tracking-widest">{deliveryMode} Selected</span>
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-2 text-white">
-                                        {['Road', 'Sea', 'Air'].map(mode => (
-                                            <button
-                                                key={mode}
-                                                onClick={() => setDeliveryMode(mode)}
-                                                className={`py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all relative overflow-hidden ${deliveryMode === mode
-                                                    ? 'bg-accent text-black border-accent'
-                                                    : 'bg-white/[0.03] border-white/5 text-muted hover:border-white/10 hover:text-white'
-                                                    }`}
-                                            >
-                                                {mode}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                                {(deliveryMode === 'Sea' || deliveryMode === 'Air') && (
-                                    <div className="space-y-3">
-                                        <p className="text-[9px] font-black text-muted uppercase tracking-widest">Select {deliveryMode === 'Sea' ? 'boat' : 'airplane'}</p>
-                                        <div className="grid grid-cols-1 gap-2">
-                                            {(TRANSPORT_ASSET_OPTIONS[deliveryMode] || []).map((opt) => (
+                                    <div className="space-y-4 relative">
+                                        <div className="flex items-center justify-between ml-1">
+                                            <p className="text-[10px] font-black text-accent uppercase tracking-[0.3em]">Logistics Protocol</p>
+                                            <span className="text-[8px] text-muted font-black uppercase tracking-widest">{deliveryMode} Selected</span>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2 text-white">
+                                            {['Road', 'Sea', 'Air'].map(mode => (
                                                 <button
-                                                    key={opt}
-                                                    type="button"
-                                                    onClick={() => setTransportAsset(opt)}
-                                                    className={`py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${transportAsset === opt ? 'bg-accent/10 border-accent text-accent' : 'bg-white/[0.03] border-white/10 text-muted hover:text-white'}`}
+                                                    key={mode}
+                                                    onClick={() => setDeliveryMode(mode)}
+                                                    className={`py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all relative overflow-hidden ${deliveryMode === mode
+                                                        ? 'bg-accent text-black border-accent'
+                                                        : 'bg-white/[0.03] border-white/5 text-muted hover:border-white/10 hover:text-white'
+                                                        }`}
                                                 >
-                                                    {opt}
+                                                    {mode}
                                                 </button>
                                             ))}
                                         </div>
-                                        <div className="space-y-2">
-                                            <label className="text-[9px] font-black text-accent uppercase tracking-widest ml-1 flex items-center gap-2">
-                                                <MapPin size={12} /> Island / Location *
-                                            </label>
-                                            <input
-                                                type="text"
-                                                placeholder={deliveryMode === 'Sea' ? 'e.g. Paradise Island Jetty' : 'e.g. Staniel Cay Airstrip'}
-                                                value={islandLocation}
-                                                onChange={(e) => setIslandLocation(e.target.value)}
-                                                className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40"
-                                            />
-                                        </div>
-                                        <div className="space-y-2">
-                                            <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Custom vessel or aircraft (optional)</label>
-                                            <input
-                                                type="text"
-                                                placeholder={deliveryMode === 'Sea' ? 'Named boat, tender, or special instructions' : 'Aircraft type, charter, or tail number'}
-                                                value={transportAssetCustom}
-                                                onChange={(e) => setTransportAssetCustom(e.target.value)}
-                                                className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40"
-                                            />
-                                        </div>
                                     </div>
-                                )}
-
-                                <CustomDatePicker
-                                    label="Order placement date"
-                                    selectedDate={orderPlacementDate}
-                                    onChange={(d) => setOrderPlacementDate(d)}
-                                />
-
-                                <label className="flex items-center gap-3 cursor-pointer px-1">
-                                    <input
-                                        type="checkbox"
-                                        className="w-4 h-4 rounded border-border accent-accent"
-                                        checked={bookChauffeur}
-                                        onChange={(e) => setBookChauffeur(e.target.checked)}
-                                    />
-                                    <span className="text-[10px] font-bold text-secondary uppercase tracking-widest hover:text-white transition-colors">Book Chauffeur (billed separately)</span>
-                                </label>
-
-                                {/* Delivery address required for catalog orders */}
-                                <div className="space-y-2">
-                                    <label className="text-[9px] font-black text-accent uppercase tracking-widest ml-1 flex items-center gap-2">
-                                        <MapPin size={12} /> Delivery Address *
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Enter delivery address..."
-                                        value={catalogDeliveryAddress}
-                                        onChange={(e) => setCatalogDeliveryAddress(e.target.value)}
-                                        className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40"
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1 flex items-center gap-2">
-                                        <FileText size={12} /> Delivery instructions (optional)
-                                    </label>
-                                    <textarea
-                                        rows={3}
-                                        placeholder="Gate codes, dock slip, contact on arrival, time windows…"
-                                        value={deliveryInstructions}
-                                        onChange={(e) => setDeliveryInstructions(e.target.value)}
-                                        className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40 resize-none"
-                                    />
-                                </div>
-
-                                <div className="flex justify-between items-center bg-white/[0.03] p-5 rounded-3xl border border-white/5 shadow-inner">
-                                    <div className="space-y-1">
-                                        <span className="text-muted text-[9px] uppercase font-black tracking-[0.3em] ml-1">Manifest Valuation</span>
-                                        <div className="flex items-center gap-1.5 text-success font-bold text-[10px] ml-1">
-                                            <Zap size={10} className="fill-success" /> Base ${cartSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                        </div>
-                                        {transportExtraFee > 0 && (
-                                            <div className="text-[10px] text-warning font-black mt-1 uppercase tracking-wide">
-                                                + {deliveryMode} fee ${transportExtraFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    {(deliveryMode === 'Sea' || deliveryMode === 'Air') && (
+                                        <div className="space-y-3">
+                                            <p className="text-[9px] font-black text-muted uppercase tracking-widest">Select {deliveryMode === 'Sea' ? 'boat' : 'airplane'}</p>
+                                            <div className="grid grid-cols-1 gap-2">
+                                                {(TRANSPORT_ASSET_OPTIONS[deliveryMode] || []).map((opt) => (
+                                                    <button
+                                                        key={opt}
+                                                        type="button"
+                                                        onClick={() => setTransportAsset(opt)}
+                                                        className={`py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${transportAsset === opt ? 'bg-accent/10 border-accent text-accent' : 'bg-white/[0.03] border-white/10 text-muted hover:text-white'}`}
+                                                    >
+                                                        {opt}
+                                                    </button>
+                                                ))}
                                             </div>
-                                        )}
-                                    </div>
-                                    <span className="text-3xl font-black text-white tracking-tight">${estimatedGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                                </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[9px] font-black text-accent uppercase tracking-widest ml-1 flex items-center gap-2">
+                                                    <MapPin size={12} /> Island / Location (Optional)
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder={deliveryMode === 'Sea' ? 'e.g. Paradise Island Jetty' : 'e.g. Staniel Cay Airstrip'}
+                                                    value={islandLocation}
+                                                    onChange={(e) => setIslandLocation(e.target.value)}
+                                                    className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Custom vessel or aircraft (optional)</label>
+                                                <input
+                                                    type="text"
+                                                    placeholder={deliveryMode === 'Sea' ? 'Named boat, tender, or special instructions' : 'Aircraft type, charter, or tail number'}
+                                                    value={transportAssetCustom}
+                                                    onChange={(e) => setTransportAssetCustom(e.target.value)}
+                                                    className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
 
-                                <button
-                                    type="button"
-                                    onClick={handleCheckout}
-                                    disabled={cart.length === 0 || !String(catalogDeliveryAddress || '').trim()}
-                                    className="w-full py-5 bg-accent text-black rounded-[1.8rem] font-black uppercase tracking-[0.3em] text-[11px] hover:shadow-[0_20px_40px_-10px_rgba(200,169,106,0.4)] transition-all disabled:opacity-20 active:scale-[0.98] flex items-center justify-center gap-4 group"
-                                >
-                                    {isRetailPersonal ? 'Checkout & pay' : 'Confirm dispatch'} <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                                </button>
+                                    <CustomDatePicker
+                                        label="Order placement date"
+                                        selectedDate={orderPlacementDate}
+                                        onChange={(d) => setOrderPlacementDate(d)}
+                                    />
+
+
+
+                                    {isRetailPersonal && (
+                                        <div className="p-4 rounded-2xl border border-accent/25 bg-accent/[0.06] space-y-3">
+                                            <p className="text-[10px] font-black text-accent uppercase tracking-[0.2em]">Payment checkout</p>
+                                            <p className="text-[10px] text-muted leading-relaxed">
+                                                Personal orders are auto-charged immediately after order creation. Select funding source and confirm authorization.
+                                            </p>
+                                            <div className="grid w-full min-w-0 gap-2 [grid-template-columns:repeat(auto-fit,minmax(7.25rem,1fr))]">
+                                                {[
+                                                    { id: 'wallet', label: 'Wallet' },
+                                                    { id: 'card', label: 'Card' },
+                                                    { id: 'bank', label: 'Bank' },
+                                                ].map((m) => (
+                                                    <button
+                                                        key={m.id}
+                                                        type="button"
+                                                        onClick={() => setPaymentMethod(m.id)}
+                                                        className={`w-full min-w-0 max-w-full min-h-[44px] box-border inline-flex items-center justify-center px-4 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-normal text-center whitespace-normal leading-snug border transition-all break-words [overflow-wrap:anywhere] ${paymentMethod === m.id ? 'bg-accent text-black border-accent' : 'bg-white/[0.03] border-white/10 text-muted hover:text-white'}`}
+                                                    >
+                                                        {m.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <label className="flex items-start gap-3 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    className="w-4 h-4 rounded border-border accent-accent mt-0.5"
+                                                    checked={authorizeCharge}
+                                                    onChange={(e) => setAuthorizeCharge(e.target.checked)}
+                                                />
+                                                <span className="text-[10px] text-secondary font-bold leading-relaxed">
+                                                    I authorize immediate charge for this order total and understand payment is captured automatically once order is submitted.
+                                                </span>
+                                            </label>
+                                        </div>
+                                    )}
+
+                                    {/* Delivery address required for catalog orders */}
+                                    <div className="space-y-2">
+                                        <label className="text-[9px] font-black text-accent uppercase tracking-widest ml-1 flex items-center gap-2">
+                                            <MapPin size={12} /> Delivery Address *
+                                        </label>
+                                        <input
+                                            type="text"
+                                            placeholder="Enter delivery address..."
+                                            value={catalogDeliveryAddress}
+                                            onChange={(e) => setCatalogDeliveryAddress(e.target.value)}
+                                            className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1 flex items-center gap-2">
+                                            <FileText size={12} /> Delivery instructions (optional)
+                                        </label>
+                                        <textarea
+                                            rows={3}
+                                            placeholder="Gate codes, dock slip, contact on arrival, time windows…"
+                                            value={deliveryInstructions}
+                                            onChange={(e) => setDeliveryInstructions(e.target.value)}
+                                            className="w-full bg-background border border-white/10 rounded-2xl px-4 py-3 text-sm text-white focus:border-accent/50 outline-none font-bold transition-all placeholder:text-muted/40 resize-none"
+                                        />
+                                    </div>
+
+                                    <div className="flex justify-between items-center bg-white/[0.03] p-5 rounded-3xl border border-white/5 shadow-inner">
+                                        <div className="space-y-1">
+                                            <span className="text-muted text-[9px] uppercase font-black tracking-[0.3em] ml-1">{isRetailPersonal ? 'Order total' : 'Manifest Valuation'}</span>
+                                            <div className="flex items-center gap-1.5 text-success font-bold text-[10px] ml-1">
+                                                <Zap size={10} className="fill-success" /> Base ${cartSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </div>
+                                            {transportExtraFee > 0 && (
+                                                <div className="text-[10px] text-warning font-black mt-1 uppercase tracking-wide">
+                                                    + {deliveryMode} fee ${transportExtraFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </div>
+                                            )}
+
+                                        </div>
+                                        <span className="text-3xl font-black text-white tracking-tight">${estimatedGrandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={handleCheckout}
+                                        disabled={cart.length === 0 || !String(catalogDeliveryAddress || '').trim() || (isRetailPersonal && !authorizeCharge)}
+                                        className="w-full py-5 bg-accent text-black rounded-[1.8rem] font-black uppercase tracking-[0.3em] text-[11px] hover:shadow-[0_20px_40px_-10px_rgba(200,169,106,0.4)] transition-all disabled:opacity-20 active:scale-[0.98] flex items-center justify-center gap-4 group"
+                                    >
+                                        {isRetailPersonal ? 'Place order & pay' : 'Confirm dispatch'} <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                                    </button>
                                 </div>
                             </div>
                         </motion.div>
                     </>
                 )}
             </AnimatePresence>
-        </div >
+        </div>
     );
 };
 

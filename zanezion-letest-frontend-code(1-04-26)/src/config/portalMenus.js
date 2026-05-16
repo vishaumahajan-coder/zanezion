@@ -81,6 +81,7 @@ export const RECOMMENDED_MENU_NAMES_BY_PORTAL = {
   ],
   concierge: [
     'Dashboard',
+    'Orders',
     'Events',
     'Guest Requests',
     'Luxury Items',

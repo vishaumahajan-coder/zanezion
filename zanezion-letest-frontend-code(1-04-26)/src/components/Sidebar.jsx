@@ -6,7 +6,7 @@ import {
   Box, LogOut, Briefcase, Navigation, Activity, AlertCircle,
   ShieldCheck, ClipboardList, Gift, Heart, Headphones,
   ShoppingBag, Map, History, FileText, Smartphone, CreditCard,
-  Globe, Car
+  Globe, Car, Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -14,7 +14,9 @@ const menuItems = {
   superadmin: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
     { icon: Users, label: 'Clients', path: '/dashboard/clients' },
+    { icon: Store, label: 'Vendors', path: '/dashboard/vendors' },
     { icon: UserCog, label: 'HQ Personnel', path: '/dashboard/users' },
+    { icon: BarChart3, label: 'Audit Protocol', path: '/dashboard/audits' },
     { icon: Globe, label: 'Plans', path: '/dashboard/plans' },
     { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
   ],
@@ -64,6 +66,7 @@ const menuItems = {
   ],
   concierge: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
+    { icon: ShoppingCart, label: 'Orders', path: '/dashboard/orders' },
     { icon: Calendar, label: 'Events', path: '/dashboard/events' },
     { icon: Heart, label: 'Guest Requests', path: '/dashboard/guest-requests' },
     { icon: Gift, label: 'Luxury Items', path: '/dashboard/luxury-items' },
@@ -75,15 +78,31 @@ const menuItems = {
   ],
   admin: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
-    { icon: ShoppingBag, label: 'Marketplace', path: '/dashboard/store' },
-    { icon: FileText, label: 'Custom Requisition', path: '/dashboard/purchase-requests' },
-    { icon: Box, label: 'My Orders', path: '/dashboard/client-orders' },
-    { icon: Car, label: 'Chauffeur Protocol', path: '/dashboard/chauffeur' },
-    { icon: Calendar, label: 'Concierge Events', path: '/dashboard/client-events' },
-    { icon: Truck, label: 'Track Delivery', path: '/dashboard/track-delivery' },
-    { icon: Package, label: 'Inventory Hub', path: '/dashboard/inventory' },
+    { icon: Users, label: 'Customers', path: '/dashboard/clients' },
+    { icon: ShoppingCart, label: 'Orders', path: '/dashboard/orders' },
+    { icon: Briefcase, label: 'Projects', path: '/dashboard/projects' },
+    { icon: Navigation, label: 'Missions', path: '/dashboard/missions' },
+    { icon: Truck, label: 'Deliveries', path: '/dashboard/deliveries' },
+    { icon: Package, label: 'Inventory', path: '/dashboard/inventory' },
+    { icon: UserCog, label: 'Staff Management', path: '/dashboard/users' },
     { icon: FileText, label: 'Invoices', path: '/dashboard/invoices' },
+    { icon: CreditCard, label: 'Payroll', path: '/dashboard/payroll' },
+    { icon: BarChart3, label: 'Reports', path: '/dashboard/reports' },
+    { icon: Headphones, label: 'Support', path: '/dashboard/support-tickets' },
+    { icon: Car, label: 'Chauffeur', path: '/dashboard/chauffeur' },
+    { icon: Calendar, label: 'Events', path: '/dashboard/events' },
+    { icon: Heart, label: 'Guest Requests', path: '/dashboard/guest-requests' },
+    { icon: Gift, label: 'Luxury Items', path: '/dashboard/luxury-items' },
+    { icon: Store, label: 'Vendors', path: '/dashboard/vendors' },
+    { icon: ShoppingCart, label: 'Purchase Requests', path: '/dashboard/purchase-requests' },
+    { icon: Box, label: 'Quotes', path: '/dashboard/quotes' },
+    { icon: FileText, label: 'Purchase Orders', path: '/dashboard/purchase-orders' },
+    { icon: Truck, label: 'Fleet', path: '/dashboard/fleet' },
+    { icon: Store, label: 'Warehouses', path: '/dashboard/warehouses' },
+    { icon: BarChart3, label: 'Audit Protocol', path: '/dashboard/audits' },
     { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
+    { icon: ShieldCheck, label: 'Security Protocol', path: '/dashboard/roles-permissions' },
+    { icon: Calendar, label: 'Leave & Absence', path: '/dashboard/leave' },
   ],
   client: [
     { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
@@ -108,6 +127,7 @@ const menuItems = {
     { icon: FileText, label: 'Purchase Orders', path: '/dashboard/purchase-orders' },
     { icon: Truck, label: 'Fleet', path: '/dashboard/fleet' },
     { icon: Store, label: 'Warehouses', path: '/dashboard/warehouses' },
+    { icon: BarChart3, label: 'Audit Protocol', path: '/dashboard/audits' },
     { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
     { icon: ShieldCheck, label: 'Security Protocol', path: '/dashboard/roles-permissions' },
     { icon: Calendar, label: 'Leave & Absence', path: '/dashboard/leave' },
@@ -135,6 +155,7 @@ const menuItems = {
     { icon: FileText, label: 'Purchase Orders', path: '/dashboard/purchase-orders' },
     { icon: Truck, label: 'Fleet', path: '/dashboard/fleet' },
     { icon: Store, label: 'Warehouses', path: '/dashboard/warehouses' },
+    { icon: BarChart3, label: 'Audit Protocol', path: '/dashboard/audits' },
     { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
     { icon: ShieldCheck, label: 'Security Protocol', path: '/dashboard/roles-permissions' },
     { icon: Calendar, label: 'Leave & Absence', path: '/dashboard/leave' },
@@ -144,7 +165,14 @@ const menuItems = {
     { icon: ShoppingBag, label: 'Marketplace', path: '/dashboard/store' },
     { icon: ShoppingCart, label: 'My Orders', path: '/dashboard/client-orders' },
     { icon: Truck, label: 'Track Delivery', path: '/dashboard/track-delivery' },
+    { icon: Car, label: 'Chauffeur', path: '/dashboard/chauffeur' },
+    { icon: Sparkles, label: 'Membership', path: '/dashboard/membership' },
+    { icon: Calendar, label: 'Events', path: '/dashboard/events' },
+    { icon: Heart, label: 'Guest Requests', path: '/dashboard/guest-requests' },
+    { icon: Gift, label: 'Luxury Items', path: '/dashboard/luxury-items' },
     { icon: Headphones, label: 'Support', path: '/dashboard/support' },
+    { icon: ShoppingCart, label: 'Purchase Requests', path: '/dashboard/purchase-requests' },
+    { icon: BarChart3, label: 'Audit Protocol', path: '/dashboard/audits' },
   ],
   staff: [
     { icon: LayoutDashboard, label: 'Staff Terminal', path: '/dashboard' },
@@ -168,6 +196,7 @@ const businessClientMenu = [
   { icon: Box, label: 'Quotes', path: '/dashboard/quotes' },
   { icon: FileText, label: 'Purchase Orders', path: '/dashboard/purchase-orders' },
   { icon: Package, label: 'Inventory', path: '/dashboard/inventory' },
+  { icon: BarChart3, label: 'Audit Protocol', path: '/dashboard/audits' },
   { icon: Store, label: 'Warehouses', path: '/dashboard/warehouses' },
   { icon: Store, label: 'Vendors', path: '/dashboard/vendors' },
   { icon: Calendar, label: 'Events', path: '/dashboard/events' },
@@ -183,7 +212,7 @@ import { normalizeRole } from '../utils/authUtils';
 
 const ROLE_DISPLAY = {
   superadmin: 'Super Admin',
-  admin: 'Manager',
+  admin: 'Admin',
   operations: 'Operations',
   procurement: 'Procurement',
   logistics: 'Logistics',
@@ -227,15 +256,15 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
 
   // Plan-based access for customer role
   const userPlan = (currentUser?.plan || 'Free').toLowerCase();
-  // Personal (customer) users: no Events, no Concierge, no Invoices — pay at checkout only
+  // Personal (customer) users: no Events, no Concierge, no Invoices — pay at checkout; chauffeur + membership
   const planMenuAccess = {
-    free:       ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
-    basic:      ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
-    standard:   ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
-    executive:  ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
-    platinum:   ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
-    premium:    ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
-    enterprise: ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Support'],
+    free:       ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Chauffeur', 'Membership', 'Support'],
+    basic:      ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Chauffeur', 'Membership', 'Support'],
+    standard:   ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Chauffeur', 'Membership', 'Support'],
+    executive:  ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Chauffeur', 'Membership', 'Support'],
+    platinum:   ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Chauffeur', 'Membership', 'Support'],
+    premium:    ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Chauffeur', 'Membership', 'Support', 'Purchase Requests', 'Audit Protocol'],
+    enterprise: ['Dashboard', 'Marketplace', 'My Orders', 'Track Delivery', 'Chauffeur', 'Membership', 'Support', 'Purchase Requests', 'Audit Protocol'],
   };
 
   const currentMenu = (() => {
@@ -251,7 +280,7 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
         'Truck': Truck, 'Zap': AlertCircle, 'AlertCircle': AlertCircle, 'FileText': FileText,
         'ShoppingBag': ShoppingBag, 'Package': Package, 'Building2': Store, 'Store': Store,
         'Bell': AlertCircle, 'BellConcierge': Heart, 'Heart': Heart, 'Diamond': Gift, 'Gift': Gift,
-        'Ticket': Calendar, 'Calendar': Calendar, 'Car': Car, 'CheckSquare': Smartphone, 'Smartphone': Smartphone,
+        'Ticket': Calendar, 'Calendar': Calendar, 'Car': Car, 'Sparkles': Sparkles, 'CheckSquare': Smartphone, 'Smartphone': Smartphone,
         'BarChart2': BarChart3, 'BarChart3': BarChart3, 'DollarSign': CreditCard, 'CreditCard': CreditCard, 'Settings': Settings,
         'Headphones': Headphones, 'History': History, 'ClipboardList': ClipboardList, 'Activity': Activity, 'UserCog': UserCog
       };
@@ -280,6 +309,29 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
           return businessClientMenu;
         }
       }
+      // Personal customers: chauffeur + membership should always be reachable (DB menu may omit them)
+      if (userRole === 'customer') {
+        const paths = (p) => String(p || '').split('?')[0];
+        if (!items.some(i => paths(i.path) === '/dashboard/chauffeur')) {
+          items = [...items, { icon: Car, label: 'Chauffeur', path: '/dashboard/chauffeur' }];
+        }
+        if (!items.some(i => paths(i.path) === '/dashboard/membership')) {
+          items = [...items, { icon: Sparkles, label: 'Membership', path: '/dashboard/membership' }];
+        }
+      }
+      // Personnel roles: Leave/Pay must remain available even if DB permissions are disabled by mistake.
+      if (['operations', 'procurement', 'logistics', 'inventory', 'concierge', 'staff'].includes(userRole)) {
+        const hasLeave = items.some(i => String(i.label || '').toLowerCase() === 'leave & absence');
+        const hasPay = items.some(i => String(i.label || '').toLowerCase() === 'pay & records');
+        items = items.map((i) => {
+          const lower = String(i.label || '').toLowerCase();
+          if (lower === 'leave & absence') return { ...i, path: '/dashboard?tab=leave' };
+          if (lower === 'pay & records') return { ...i, path: '/dashboard?tab=pay' };
+          return i;
+        });
+        if (!hasLeave) items.push({ icon: Calendar, label: 'Leave & Absence', path: '/dashboard?tab=leave' });
+        if (!hasPay) items.push({ icon: History, label: 'Pay & Records', path: '/dashboard?tab=pay' });
+      }
       return items;
     }
     if (userRole === 'client') {
@@ -287,7 +339,10 @@ const Sidebar = ({ isOpen, toggleSidebar, role }) => {
     }
     // Customer role: filter by plan
     if (userRole === 'customer') {
-      const allowed = planMenuAccess[userPlan] || planMenuAccess.free;
+      let allowed = planMenuAccess[userPlan] || planMenuAccess.free;
+      if (currentUser?.concierge_member || currentUser?.conciergeMembership) {
+        allowed = [...allowed, 'Events', 'Guest Requests', 'Luxury Items'];
+      }
       return (menuItems.customer || []).filter(item => allowed.includes(item.label));
     }
     return menuItems[userRole] || menuItems.superadmin;

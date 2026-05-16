@@ -2,13 +2,13 @@ import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import KpiCard from '../../components/KpiCard';
 import StatusBadge from '../../components/StatusBadge';
-import StockModal from '../../components/StockModal';
 import {
   Package, AlertTriangle, Plus, ClipboardList,
   Warehouse, ArrowRight, Box, Store,
 } from 'lucide-react';
 
 import { useData } from '../../context/GlobalDataContext';
+import { useNavigate } from 'react-router-dom';
 
 /** Parse qty whether API returns number or string like "50 units". */
 function parseQty(value) {
@@ -19,9 +19,9 @@ function parseQty(value) {
 }
 
 const InventoryDashboardRole = () => {
+  const navigate = useNavigate();
   const {
     inventory,
-    addInventory,
     fetchInventory,
     inventoryAlerts,
     fetchInventoryAlerts,
@@ -34,29 +34,6 @@ const InventoryDashboardRole = () => {
     fetchInventoryAlerts();
     fetchWarehouses();
   }, [fetchInventory, fetchInventoryAlerts, fetchWarehouses]);
-
-  const [isModalOpen, setIsModalOpen] = useState(false);
-
-  const handleSaveStock = (formData) => {
-    const qtyNum = parseQty(formData.quantity);
-    const defaultWhName = warehouses.length > 0 ? warehouses[0].name : '';
-    
-    // Use warehouseId directly if provided by the modal, otherwise fallback to lookup
-    const whId = formData.warehouseId || warehouses.find(
-      (w) => (w.name || w.warehouse_name) === (formData.warehouseLocation || defaultWhName)
-    )?.id;
-
-    addInventory({
-      name: formData.productName,
-      qty: qtyNum,
-      category: formData.category || 'Stock Entry',
-      price: 0,
-      warehouse_id: whId,
-      location: formData.warehouseLocation || defaultWhName,
-      inventoryType: 'Warehouse',
-    });
-    setIsModalOpen(false);
-  };
 
   const lowStockAlerts = useMemo(
     () =>
@@ -114,7 +91,7 @@ const InventoryDashboardRole = () => {
           <button
             type="button"
             className="btn-primary flex-1 sm:flex-none flex items-center justify-center gap-2 text-[10px] sm:text-xs py-3 px-6"
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => navigate('/dashboard/inventory?action=entry&type=Marketplace')}
           >
             <Plus size={16} /> New stock entry
           </button>
@@ -262,8 +239,6 @@ const InventoryDashboardRole = () => {
           )}
         </div>
       </div>
-
-      <StockModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveStock} />
     </div>
   );
 };

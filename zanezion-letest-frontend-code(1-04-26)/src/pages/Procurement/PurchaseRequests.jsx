@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import Table from '../../components/Table';
+import { swalWarning } from '../../utils/swal';
 import { Search, Plus } from 'lucide-react';
 import { useData } from '../../context/GlobalDataContext';
 import RequestModal from '../../components/RequestModal';
@@ -8,13 +9,19 @@ import { normalizeRole } from '../../utils/authUtils';
 import { formatDateTimeEst } from '../../utils/dateEst';
 
 const PurchaseRequests = () => {
-  const { purchaseRequests, addPurchaseRequest, updatePurchaseRequest, deletePurchaseRequest, fetchProcurement, hasMenuPermission, currentUser } = useData();
+  const { 
+    purchaseRequests, addPurchaseRequest, updatePurchaseRequest, deletePurchaseRequest, 
+    fetchProcurement, hasMenuPermission, currentUser, fetchCustomerUsers, fetchStaff, fetchClients 
+  } = useData();
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
 
   React.useEffect(() => {
     fetchProcurement();
-  }, [fetchProcurement]);
+    fetchCustomerUsers({ include_all: 1 });
+    fetchStaff();
+    fetchClients();
+  }, [fetchProcurement, fetchCustomerUsers, fetchStaff, fetchClients]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('view');
   const [selectedRequest, setSelectedRequest] = useState(null);
@@ -82,15 +89,28 @@ const PurchaseRequests = () => {
     },
   ];
 
+  const handleNewRequest = () => {
+    const role = normalizeRole(currentUser?.role);
+    const clientType = currentUser?.client_type || 'Individual';
+    const isPremium = currentUser?.plan?.toLowerCase().includes('premium') || currentUser?.is_upgraded;
+
+    if (role === 'customer' && clientType === 'Individual' && !isPremium) {
+      swalWarning('Upgrade Required', 'Individuals need to upgrade to a Premium Plan ($10/mo) to submit purchase requests.');
+      return;
+    }
+
+    handleAction('add', {});
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Purchase Requests</h1>
-          <p className="text-secondary mt-1">Review and approve procurement requests from departments.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-white italic uppercase tracking-tighter">Purchase Requests</h1>
+          <p className="text-secondary mt-1 text-sm font-medium opacity-80 italic uppercase tracking-widest">Review and approve procurement requests from departments.</p>
         </div>
         {(hasMenuPermission('Purchase Requests', 'can_add') || normalizeRole(currentUser?.role) === 'customer' || normalizeRole(currentUser?.role) === 'procurement') && (
-          <button className="btn-primary flex items-center gap-2" onClick={() => handleAction('add', {})}>
+          <button className="btn-primary flex items-center gap-2 px-6 py-3 rounded-xl shadow-lg shadow-accent/20" onClick={handleNewRequest}>
             <Plus size={16} /> New Request
           </button>
         )}

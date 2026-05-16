@@ -9,11 +9,9 @@ import { useData } from '../../context/GlobalDataContext';
 import StatusBadge from '../../components/StatusBadge';
 import Pagination from '../../components/Common/Pagination';
 
-const isApprovedVendor = (v) => String(v?.status ?? 'active').toLowerCase() === 'active';
-
 const PurchaseOrders = () => {
-    const { purchaseOrders, vendors, addPurchaseOrder, updatePurchaseOrder, receiveGoodsAgainstPO, reverseGoodsReceipt, fetchPurchaseOrders, fetchVendors, currentUser } = useData();
-    const approvedVendors = React.useMemo(() => (vendors || []).filter(isApprovedVendor), [vendors]);
+    const { purchaseOrders, marketplaceVendors, addPurchaseOrder, updatePurchaseOrder, receiveGoodsAgainstPO, reverseGoodsReceipt, fetchPurchaseOrders, fetchVendors, currentUser } = useData();
+    const approvedVendors = marketplaceVendors || [];
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
 

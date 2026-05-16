@@ -86,17 +86,17 @@ const GuestRequests = () => {
 
     return (
         <div className="space-y-8">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Concierge Requests</h1>
-                    <p className="text-secondary mt-1">Managing high-priority guest requirements and lifestyle services.</p>
+            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6 px-0 sm:px-2">
+                <div className="min-w-0">
+                    <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Concierge Requests</h1>
+                    <p className="text-secondary mt-1 text-sm">Managing high-priority guest requirements and lifestyle services.</p>
                 </div>
-                <div className="flex gap-3">
-                    <div className="relative">
+                <div className="flex flex-wrap sm:flex-row gap-3 w-full xl:w-auto">
+                    <div className="relative flex-1 sm:flex-none sm:w-64">
                         <input
                             type="text"
                             placeholder="Search requests..."
-                            className="bg-white/5 border border-border rounded-xl py-2 px-10 text-sm focus:outline-none focus:border-accent w-64"
+                            className="bg-white/5 border border-border rounded-xl py-2 px-10 text-sm focus:outline-none focus:border-accent w-full"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />

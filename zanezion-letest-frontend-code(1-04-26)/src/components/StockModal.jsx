@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Modal from './Modal';
 import { Package, Hash, Warehouse, Tag, Activity } from 'lucide-react';
 import { useData } from '../context/GlobalDataContext';
+import { marketplaceCategorySelectOptions } from '../utils/data';
 
 const StockModal = ({ isOpen, onClose, onSave }) => {
   const { warehouses } = useData();
@@ -12,7 +13,7 @@ const StockModal = ({ isOpen, onClose, onSave }) => {
     quantity: '',
     warehouseLocation: defaultWh,
     warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
-    category: '',
+    category: 'General',
     status: 'Stable'
   });
 
@@ -23,7 +24,7 @@ const StockModal = ({ isOpen, onClose, onSave }) => {
         quantity: '',
         warehouseLocation: defaultWh,
         warehouseId: (warehouses && warehouses.length > 0) ? warehouses[0].id : null,
-        category: '',
+        category: 'General',
         status: 'Stable'
       });
     }
@@ -95,15 +96,21 @@ const StockModal = ({ isOpen, onClose, onSave }) => {
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-muted uppercase">Category</label>
             <div className="relative">
-              <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" size={14} />
-              <input
-                type="text"
-                value={formData.category}
+              <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-muted z-10 pointer-events-none" size={14} />
+              <select
+                value={(() => {
+                  const opts = marketplaceCategorySelectOptions(formData.category);
+                  const v = String(formData.category ?? '').trim() || 'General';
+                  return opts.includes(v) ? v : 'General';
+                })()}
                 onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                placeholder="e.g. Beverages"
-                className="w-full bg-background border border-border rounded-lg pl-10 pr-4 py-2 text-sm focus:border-accent outline-none"
+                className="w-full bg-background border border-border rounded-lg pl-10 pr-4 py-2 text-sm focus:border-accent outline-none appearance-none font-bold"
                 required
-              />
+              >
+                {marketplaceCategorySelectOptions(formData.category).map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
             </div>
           </div>
           <div className="col-span-full space-y-1">

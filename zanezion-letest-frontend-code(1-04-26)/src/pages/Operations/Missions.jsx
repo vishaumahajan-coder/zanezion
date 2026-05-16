@@ -37,9 +37,12 @@ const Missions = () => {
   // Link mission to its project by orderId or projectId
   const getProject = (mission) => {
     if (!projects || !projects.length) return null;
+    const pId = mission.project_id || mission.projectId;
+    const oId = mission.order_id || mission.orderId;
+    
     return projects.find(p =>
-      (mission.projectId && String(p.id) === String(mission.projectId)) ||
-      (mission.orderId && (String(p.orderId) === String(mission.orderId) || String(p.id) === String(mission.orderId)))
+      (pId && String(p.id) === String(pId)) ||
+      (oId && (String(p.order_id || p.orderId) === String(oId) || String(p.id) === String(oId)))
     ) || null;
   };
 
@@ -72,32 +75,37 @@ const Missions = () => {
 
   const filteredMissions = missions.filter(m => 
     String(m.id).toLowerCase().includes(searchTerm.toLowerCase()) ||
-    String(m.orderId).toLowerCase().includes(searchTerm.toLowerCase()) ||
+    String(m.order_id || m.orderId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    String(m.project_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     m.status?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const columns = [
     { header: "Mission ID", accessor: "id" },
-    { header: "Ref / Order ID", accessor: "orderId" },
+    { 
+      header: "Ref / Order ID", 
+      accessor: "order_id",
+      render: (row) => row.order_id || row.orderId || '—'
+    },
     {
       header: "Project",
-      accessor: "orderId",
+      accessor: "project_name",
       render: (row) => {
-        const proj = getProject(row);
-        return proj ? (
+        const projName = row.project_name || getProject(row)?.name;
+        const projId = row.project_id || row.projectId || getProject(row)?.id;
+        const orderId = row.order_id || row.orderId;
+
+        return projName ? (
           <div className="space-y-0.5 max-w-[150px]">
-            <p className="text-xs font-bold text-white truncate">{proj.name || proj.title || 'N/A'}</p>
-            {proj.description && (
-              <p className="text-[9px] text-secondary italic truncate leading-tight">{proj.description}</p>
-            )}
+            <p className="text-xs font-bold text-white truncate">{projName}</p>
             <p className="text-[9px] text-accent font-black uppercase tracking-wider">
-              Ref #{proj.id}{row.orderId ? ` · ORD-${row.orderId}` : ''}
+              Ref #{projId}{orderId ? ` · ORD-${orderId}` : ''}
             </p>
           </div>
         ) : (
           <div className="space-y-0.5">
             <span className="text-muted italic text-xs">No Project</span>
-            {row.orderId && <p className="text-[9px] text-accent">ORD-{row.orderId}</p>}
+            {orderId && <p className="text-[9px] text-accent">ORD-{orderId}</p>}
           </div>
         );
       }

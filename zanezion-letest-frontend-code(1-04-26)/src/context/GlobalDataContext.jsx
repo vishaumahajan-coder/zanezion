@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../utils/api';
-import { normalizeRole, roleCanCreateInstitutionalOrder } from '../utils/authUtils';
-import { isoDateSlice, normalizeOrderStatusForApi, displayOrderStatus } from '../utils/orderWorkflow';
-import { VENDOR_PERFORMANCE, INVENTORY_ALERTS, RECENT_ORDERS, CLIENTS, ACCESS_PLANS, USERS, ORDERS, INVOICES, VENDORS, INVENTORY } from '../utils/data';
+import { normalizeRole, roleCanCreateInstitutionalOrder, roleCanUpdateOrderStatus, vendorVisibleInSharedLists } from '../utils/authUtils';
+import { swalInfo } from '../utils/swal';
+import { isoDateSlice, localDateISO, normalizeOrderStatusForApi, displayOrderStatus } from '../utils/orderWorkflow';
+import { VENDOR_PERFORMANCE, INVENTORY_ALERTS, RECENT_ORDERS, ACCESS_PLANS, USERS, ORDERS, INVOICES, VENDORS, INVENTORY, canonicalMarketplaceCategory, PERSONAL_MEMBERSHIP_FEE_USD } from '../utils/data';
 
 const GlobalDataContext = createContext();
 
@@ -24,11 +25,105 @@ function withoutPassword(obj) {
     return rest;
 }
 
+function normalizeCompanyIdForApi(value) {
+    if (value == null) return undefined;
+    if (typeof value === 'string' && value.trim() === '') return undefined;
+    const numeric = Number(value);
+    if (!Number.isNaN(numeric) && Number.isFinite(numeric) && numeric > 0) return numeric;
+    return undefined;
+}
+
+/** First usable image URL from GET /inventory row (snake/camel + common aliases). */
+function inventoryImageFromApiRow(i) {
+    if (!i || typeof i !== 'object') return '';
+    const candidates = [
+        i.image_url, i.imageUrl, i.image, i.photo_url, i.photoUrl, i.photo,
+        i.product_image, i.productImage, i.picture_url, i.pictureUrl,
+        i.thumbnail_url, i.thumbnailUrl, i.media_url, i.mediaUrl,
+        i.cover_image, i.coverImage,
+        Array.isArray(i.images) && i.images[0] ? (typeof i.images[0] === 'string' ? i.images[0] : i.images[0]?.url) : null,
+    ];
+    for (const c of candidates) {
+        if (c == null || c === '') continue;
+        if (typeof c === 'string') return c;
+        if (typeof c === 'object' && typeof c.url === 'string') return c.url;
+    }
+    return '';
+}
+
+/** POST/PUT inventory: treat 2xx + body as success when `success` flag is omitted (some APIs only return `data`). */
+function inventoryWriteResponseOk(res) {
+    if (!res || res.status < 200 || res.status >= 300) return false;
+    if (res.data?.success === false) return false;
+    if (res.data?.success === true) return true;
+    const payload = res.data?.data ?? res.data;
+    if (payload == null) return false;
+    if (typeof payload !== 'object' || Array.isArray(payload)) return true;
+    return Object.keys(payload).length > 0;
+}
+
+/** Multipart inventory: only append FK fields when they are positive integers — `warehouse_id=""` often causes DB 500s. */
+function appendInventoryFk(formData, key, raw) {
+    if (raw === undefined || raw === null) return;
+    const s = String(raw).trim();
+    if (s === '' || s === 'undefined' || s === 'null') return;
+    const n = Number(s);
+    if (!Number.isFinite(n) || n < 1) return;
+    formData.append(key, String(Math.trunc(n)));
+}
+
+function nullablePositiveInt(raw) {
+    if (raw === undefined || raw === null) return null;
+    const s = String(raw).trim();
+    if (s === '' || s === 'undefined' || s === 'null') return null;
+    const n = Number(s);
+    if (!Number.isFinite(n) || n < 1) return null;
+    return Math.trunc(n);
+}
+
+/** Many inventory INSERTs require `company_id`; superadmin often has none — fall back to env or HQ `1`. */
+function resolveInventoryCompanyId(user, rowCompanyId) {
+    const fromRow = normalizeCompanyIdForApi(rowCompanyId);
+    if (fromRow != null) return fromRow;
+    const fromUser = normalizeCompanyIdForApi(user?.company_id ?? user?.companyId);
+    if (fromUser != null) return fromUser;
+    const env = Number(import.meta.env?.VITE_DEFAULT_COMPANY_ID);
+    if (Number.isFinite(env) && env > 0) return env;
+    return 1;
+}
+
+
 function normalizeApiUserPayload(data) {
     if (!data || typeof data !== 'object') return null;
     if (data.user && typeof data.user === 'object') return data.user;
     if (Array.isArray(data)) return data[0] && typeof data[0] === 'object' ? data[0] : null;
     return data;
+}
+
+function normalizeUserForUi(user) {
+    if (!user || typeof user !== 'object') return user;
+    const bankName = user.bank_name ?? user.bankName ?? user.bankingInfo?.bank ?? '';
+    const accountNumber = user.account_number ?? user.accountNumber ?? user.bankingInfo?.account ?? '';
+    const routingNumber = user.routing_number ?? user.routingNumber ?? user.bankingInfo?.routing ?? '';
+    const vacationBalance = user.vacation_balance ?? user.vacationBalance ?? 0;
+    return {
+        ...user,
+        bank_name: bankName,
+        bankName,
+        account_number: accountNumber,
+        accountNumber,
+        routing_number: routingNumber,
+        routingNumber,
+        vacation_balance: vacationBalance,
+        vacationBalance,
+        bankingInfo: {
+            ...(user.bankingInfo || {}),
+            bank: bankName,
+            account: accountNumber,
+            routing: routingNumber,
+            method: user.bankingInfo?.method || 'Direct Deposit',
+        },
+    };
 }
 
 /** API route id: numeric or first digits from VND-123 style. */
@@ -58,11 +153,53 @@ function normalizeClientsResponseBody(body) {
 
 function mapClientFromApi(c) {
     if (!c || typeof c !== 'object') return null;
+    const roleRaw = String(c.role || c.user_role || '').trim().toLowerCase();
+    const clientTypeRaw =
+        c.client_type ??
+        c.clientType ??
+        c.client_kind ??
+        c.clientKind ??
+        c.account_type ??
+        c.accountType ??
+        (roleRaw === 'saas_client' ? 'SaaS' : null) ??
+        (roleRaw === 'client' ? 'Business' : null) ??
+        (roleRaw === 'customer' ? 'Personal' : null) ??
+        null;
+    const tenantTypeRaw = c.tenant_type ?? c.tenantType ?? c.tenant ?? null;
     return {
         ...c,
         companyName: c.business_name || c.companyName || c.name,
         location: c.address || c.location || '',
+        client_type: clientTypeRaw ?? c.client_type,
+        clientType: c.clientType ?? clientTypeRaw,
+        tenant_type: tenantTypeRaw ?? c.tenant_type,
+        tenantType: c.tenantType ?? tenantTypeRaw,
     };
+}
+
+function normalizeClientTypeValue(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw === 'saas' || raw === 'saas_client' || raw === 'saas client' || raw === 'subscription') return 'SaaS';
+    if (raw === 'business' || raw === 'client' || raw === 'business_client' || raw === 'business client') return 'Business';
+    if (raw === 'personal' || raw === 'customer' || raw === 'individual' || raw === 'direct') return 'Personal';
+    return String(value || '').trim();
+}
+
+function clientMatchesTypeFilter(client, requestedType) {
+    if (!requestedType) return true;
+    const desired = normalizeClientTypeValue(requestedType);
+    const actual = normalizeClientTypeValue(
+        client?.client_type ??
+        client?.clientType ??
+        client?.account_type ??
+        client?.accountType ??
+        client?.role ??
+        client?.user_role ??
+        (String(client?.plan || '').toLowerCase() !== 'free' && String(client?.plan || '').trim() ? 'saas' : '')
+    );
+    if (!desired) return true;
+    return desired.toLowerCase() === actual.toLowerCase();
 }
 
 function vendorPathId(id) {
@@ -76,15 +213,18 @@ function vendorPathId(id) {
 }
 
 function buildVendorApiBody(vendor, companyId) {
-    const name = (vendor.name || '').trim();
+    const name = String(vendor.name || vendor.vendor_name || vendor.business_name || vendor.company_name || '').trim();
     if (!name) {
         const err = new Error('Vendor name is required.');
         err.code = 'VALIDATION';
         throw err;
     }
-    const contactName = (vendor.contact_name || vendor.contact || '').trim();
+    // Edit form writes `contact`; prefer it over stale API-backed contact_name/contact_person.
+    const contactName = (vendor.contact || vendor.contact_name || vendor.contactPerson || '').trim();
     const body = {
         name,
+        // Some backends only read vendor_name for the directory label
+        vendor_name: name,
         email: (vendor.email || '').trim() || undefined,
         phone: (vendor.phone || '').trim() || undefined,
         category: (vendor.category || '').trim() || undefined,
@@ -120,6 +260,141 @@ function buildVendorApiBody(vendor, companyId) {
         out[k] = v;
     }
     return out;
+}
+
+/**
+ * API rows: only explicit status strings (or numeric 0/1) count as active/inactive.
+ * We do not treat bare `is_active: true` as marketplace-approved — many backends default it on INSERT;
+ * HQ workflow requires an explicit `status: active` (or equivalent string) from the API.
+ */
+function mapVendorStatusFromApi(v) {
+    if (!v || typeof v !== 'object') return 'inactive';
+    const raw = v.status ?? v.vendor_status ?? v.approval_status ?? v.state;
+    if (raw != null && String(raw).trim() !== '') {
+        const s = String(raw).trim().toLowerCase();
+        if (['active', 'inactive', 'blacklisted'].includes(s)) return s;
+        if (s === 'pending' || s === 'awaiting_approval' || s === 'awaitingapproval') return 'inactive';
+        if (s === '1' || s === 'true') return 'active';
+        if (s === '0' || s === 'false') return 'inactive';
+        return 'inactive';
+    }
+    const ia = v.is_active ?? v.isActive ?? v.active;
+    if (ia === 0 || ia === false || ia === '0' || String(ia).toLowerCase() === 'false') return 'inactive';
+    return 'inactive';
+}
+
+/** POST /vendors response shapes vary — extract the created row for follow-up PUT. */
+function normalizeVendorCreateResponse(resBody) {
+    if (resBody == null || typeof resBody !== 'object') return null;
+    const payload = Object.prototype.hasOwnProperty.call(resBody, 'data') ? resBody.data : resBody;
+    if (payload == null) return null;
+    if (Array.isArray(payload)) {
+        const row = payload[0];
+        return row && typeof row === 'object' ? row : null;
+    }
+    if (typeof payload === 'object') {
+        if (payload.vendor && typeof payload.vendor === 'object') return payload.vendor;
+        if (payload.id != null) return payload;
+    }
+    return null;
+}
+
+const PENDING_VENDOR_OVERRIDE_KEY = 'pending_vendor_overrides_v1';
+const PENDING_VENDOR_DRAFTS_KEY = 'pending_vendor_drafts_v1';
+const CUSTOMER_ORDER_STATUS_OVERRIDE_KEY = 'customer_order_status_overrides_v1';
+const SHIPPING_MODE_PRICING_KEY = 'zz_shipping_mode_pricing_v1';
+
+function readPendingVendorOverrides() {
+    try {
+        const raw = localStorage.getItem(PENDING_VENDOR_OVERRIDE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
+    } catch {
+        return [];
+    }
+}
+
+function writePendingVendorOverrides(ids) {
+    try {
+        const list = Array.from(new Set((ids || []).map((x) => String(x)).filter(Boolean)));
+        localStorage.setItem(PENDING_VENDOR_OVERRIDE_KEY, JSON.stringify(list));
+    } catch {
+        // ignore storage errors
+    }
+}
+
+function readPendingVendorDrafts() {
+    try {
+        const raw = localStorage.getItem(PENDING_VENDOR_DRAFTS_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((x) => x && typeof x === 'object' && x.id != null);
+    } catch {
+        return [];
+    }
+}
+
+function writePendingVendorDrafts(rows) {
+    try {
+        const list = Array.isArray(rows) ? rows.filter((x) => x && typeof x === 'object' && x.id != null) : [];
+        localStorage.setItem(PENDING_VENDOR_DRAFTS_KEY, JSON.stringify(list));
+    } catch {
+        // ignore storage errors
+    }
+}
+
+function readCustomerOrderStatusOverrides() {
+    try {
+        const raw = localStorage.getItem(CUSTOMER_ORDER_STATUS_OVERRIDE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeCustomerOrderStatusOverrides(ids) {
+    try {
+        const list = Array.from(new Set((ids || []).map((x) => String(x)).filter(Boolean)));
+        localStorage.setItem(CUSTOMER_ORDER_STATUS_OVERRIDE_KEY, JSON.stringify(list));
+    } catch {
+        // ignore storage errors
+    }
+}
+
+function readShippingModePricing() {
+    try {
+        const raw = localStorage.getItem(SHIPPING_MODE_PRICING_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return {
+            Road: Number(parsed?.Road) >= 0 ? Number(parsed.Road) : 0,
+            Sea: Number(parsed?.Sea) >= 0 ? Number(parsed.Sea) : 150,
+            Air: Number(parsed?.Air) >= 0 ? Number(parsed.Air) : 300,
+        };
+    } catch {
+        return { Road: 0, Sea: 150, Air: 300 };
+    }
+}
+
+function writeShippingModePricing(pricing) {
+    try {
+        localStorage.setItem(SHIPPING_MODE_PRICING_KEY, JSON.stringify(pricing));
+    } catch {
+        // ignore storage errors
+    }
+}
+
+/** Vendors table / directory: Super Admin sees all; admin & procurement see non-blacklisted; others see HQ-approved only. */
+function vendorsVisibleInDirectory(mapped, viewerRole) {
+    const key = normalizeRole(viewerRole);
+    if (key === 'superadmin') return mapped;
+    if (['admin', 'saas_client', 'procurement'].includes(key)) {
+        return mapped.filter((v) => String(v.status || '').toLowerCase() !== 'blacklisted');
+    }
+    return mapped.filter((v) => vendorVisibleInSharedLists(v, viewerRole));
 }
 
 /** DB expects integers — frontend often sends "ORD-12", "CLT-5", or "user_9". */
@@ -185,15 +460,55 @@ function buildFinanceInvoiceCreatePayload(invoice) {
     return body;
 }
 
+/** GET /orders row → UI `total`: use API money fields when > 0, else sum items (qty × unit price). */
+function mapOrderDisplayTotal(o, parsedItemsArr) {
+    const toNum = (v) => {
+        if (v == null || v === '') return NaN;
+        return typeof v === 'number' && Number.isFinite(v) ? v : parseFloat(String(v).replace(/,/g, ''));
+    };
+    const candidates = [
+        o.total_amount,
+        o.totalAmount,
+        o.amount,
+        o.total,
+        o.grand_total,
+        o.grandTotal,
+        o.order_total,
+        o.orderTotal,
+    ];
+    for (const c of candidates) {
+        const n = toNum(c);
+        if (Number.isFinite(n) && n > 0) return n;
+    }
+    const lines = Array.isArray(parsedItemsArr) ? parsedItemsArr : [];
+    let sum = 0;
+    for (const line of lines) {
+        const lineTot = toNum(line.total ?? line.line_total ?? line.lineTotal ?? line.subtotal);
+        if (Number.isFinite(lineTot) && lineTot > 0) {
+            sum += lineTot;
+            continue;
+        }
+        const q = toNum(line.qty ?? line.quantity ?? 1);
+        const p = toNum(line.price ?? line.unit_price ?? line.unitPrice ?? line.amount ?? 0);
+        sum += (Number.isFinite(q) ? q : 0) * (Number.isFinite(p) ? p : 0);
+    }
+    if (Number.isFinite(sum) && sum > 0) return sum;
+    const z = toNum(o.total_amount ?? o.totalAmount ?? o.amount ?? o.total ?? 0);
+    return Number.isFinite(z) ? z : 0;
+}
+
 export const GlobalDataProvider = ({ children }) => {
     // Initial States from data.js
     const [subscriptionRequests, setSubscriptionRequests] = useState([]);
-    const [clients, setClients] = useState(CLIENTS);
+    const [clients, setClients] = useState([]);
     const [vendors, setVendors] = useState(VENDORS);
     const [inventory, setInventory] = useState(INVENTORY);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [accessPlans, setAccessPlans] = useState(ACCESS_PLANS);
+    const [pendingVendorOverrideIds, setPendingVendorOverrideIds] = useState(() => readPendingVendorOverrides());
+    const [pendingVendorDrafts, setPendingVendorDrafts] = useState(() => readPendingVendorDrafts());
+    const [customerOrderStatusOverrides, setCustomerOrderStatusOverrides] = useState(() => readCustomerOrderStatusOverrides());
 
     const [currentUser, setCurrentUser] = useState(() => {
         const savedUser = localStorage.getItem('user');
@@ -223,12 +538,12 @@ export const GlobalDataProvider = ({ children }) => {
     /** Logistics role: delivery ops screens should always support standard CRUD actions. */
     const LOGISTICS_FULL_CRUD_MENUS = new Set(['fleet', 'deliveries', 'tracking', 'routes', 'urgent']);
     /** Concierge role should always be able to create/manage their core service menus. */
-    const CONCIERGE_FULL_CRUD_MENUS = new Set(['events', 'guest requests', 'luxury items']);
+    const CONCIERGE_FULL_CRUD_MENUS = new Set(['orders', 'events', 'guest requests', 'luxury items', 'chauffeur']);
 
     // Helper: check if user has a specific action on a menu
     const hasMenuPermission = (menuName, action = 'can_view') => {
         const role = currentUser?.role?.toLowerCase().replace(/\s+/g, '_');
-        if (role === 'super_admin' || role === 'superadmin' || role === 'admin') return true;
+        if (role === 'super_admin' || role === 'superadmin' || role === 'admin' || role === 'saas_client') return true;
 
         const key = String(menuName || '').trim().toLowerCase();
         if (role === 'procurement' && PROCUREMENT_FULL_CRUD_MENUS.has(key)) {
@@ -296,6 +611,45 @@ export const GlobalDataProvider = ({ children }) => {
         }, ...prev].slice(0, 50));
     };
 
+    /** Personal (customer) portal membership — same flags as Concierge Lifestyle on Plans; local profile until PSP wiring */
+    const activatePersonalMembership = React.useCallback(async () => {
+        try {
+            const next = {
+                ...currentUser,
+                concierge_member: true,
+                concierge_membership_since: new Date().toISOString().slice(0, 10),
+                concierge_fee_usd: PERSONAL_MEMBERSHIP_FEE_USD,
+                plan: 'Premium',
+                is_upgraded: true
+            };
+
+            // 1. Update Backend
+            if (currentUser?.id) {
+                await api.put(`/users/${currentUser.id}`, {
+                    plan: 'Premium',
+                    is_upgraded: true,
+                    concierge_member: true
+                });
+            }
+
+            // 2. Update Local State
+            setCurrentUser(next);
+            try {
+                localStorage.setItem('user', JSON.stringify(next));
+            } catch (_) { /* ignore */ }
+
+            addLog({
+                action: 'Membership upgrade',
+                detail: `Personal portal membership activated ($${PERSONAL_MEMBERSHIP_FEE_USD}/mo platform subscription fee). Access to Purchase Requests and Audit Logs is now unlocked.`,
+                type: 'system'
+            });
+        } catch (error) {
+            console.error("Failed to activate membership on backend:", error);
+            // Fallback to local update if backend fails (optimistic)
+            setCurrentUser(prev => ({ ...prev, plan: 'Premium', is_upgraded: true, concierge_member: true }));
+        }
+    }, [currentUser]);
+
     const formatDateTime = (date, time) => {
         if (!date) date = new Date().toISOString().split('T')[0];
         if (!time) return `${date} 00:00:00`;
@@ -347,7 +701,43 @@ export const GlobalDataProvider = ({ children }) => {
     const clearCart = () => setCart([]);
 
     const fetchClients = React.useCallback(async (options = {}) => {
+        const buildFallbackFromUsers = async () => {
+            const res = await api.get('/users/customers?include_all=1&include_client_role=1');
+            const list = res.data?.success ? (res.data.data || []) : [];
+            return list
+                .filter((u) => {
+                    const role = String(u?.role || '').toLowerCase();
+                    const acct = normalizeClientTypeValue(u?.account_type ?? u?.accountType ?? u?.client_type ?? u?.clientType ?? role);
+                    return ['client', 'customer', 'saas_client'].includes(role) || ['business', 'personal', 'saas'].includes(String(acct || '').toLowerCase());
+                })
+                .map((u) => {
+                    const acct = normalizeClientTypeValue(u?.account_type ?? u?.accountType ?? u?.client_type ?? u?.clientType ?? u?.role);
+                    const mappedType = acct || (String(u?.role || '').toLowerCase() === 'client' ? 'Business' : (String(u?.role || '').toLowerCase() === 'saas_client' ? 'SaaS' : 'Personal'));
+                    const base = mapClientFromApi({
+                        id: u?.client_id ?? u?.company_id ?? u?.id,
+                        name: u?.name || u?.business_name || u?.company_name || '',
+                        business_name: u?.business_name || u?.company_name || u?.companyName || '',
+                        email: u?.email || '',
+                        phone: u?.phone || '',
+                        address: u?.address || u?.location || '',
+                        location: u?.location || u?.address || '',
+                        status: u?.status || 'pending',
+                        source: 'Signup',
+                        client_type: mappedType,
+                        account_type: mappedType,
+                        business_license_url: u?.business_license_url || u?.businessLicenseUrl || '',
+                    });
+                    return {
+                        ...(base || {}),
+                        signup_user_id: u?.id,
+                    };
+                })
+                .filter(Boolean);
+        };
         try {
+            const roleKey = normalizeRole(currentUser?.role);
+            const requestedTypeNorm = normalizeClientTypeValue(options.client_type);
+            const tenantCustomerOnlyView = (roleKey === 'admin' || roleKey === 'saas_client') && requestedTypeNorm === 'Personal';
             const params = new URLSearchParams();
             if (options.search) params.append('search', options.search);
             if (options.client_type) params.append('client_type', options.client_type);
@@ -356,33 +746,79 @@ export const GlobalDataProvider = ({ children }) => {
             let raw = res.data?.success ? res.data.data : res.data;
             const arr = normalizeClientsResponseBody(raw);
             const mapped = arr.map(mapClientFromApi).filter(Boolean);
-            // Empty API list wipes UI dropdowns; keep seed list until backend returns rows.
             if (mapped.length > 0) {
-                setClients(mapped);
+                const filteredMapped = mapped.filter((c) => clientMatchesTypeFilter(c, options.client_type));
+                if (filteredMapped.length > 0) {
+                    setClients(filteredMapped);
+                } else {
+                    if (tenantCustomerOnlyView) {
+                        // Admin customer menu should only show admin-added tenant customers,
+                        // not personal signup users from global fallback.
+                        setClients([]);
+                        return;
+                    }
+                    // API returned clients, but none match requested type (common for Personal customers).
+                    // Fall back to users directory so admin/customer tabs still show signup + manually added customers.
+                    const fromUsers = await buildFallbackFromUsers();
+                    setClients(fromUsers.filter((c) => clientMatchesTypeFilter(c, options.client_type)));
+                }
             } else {
-                setClients(CLIENTS.map((c) => mapClientFromApi(c)).filter(Boolean));
+                if (tenantCustomerOnlyView) {
+                    setClients([]);
+                    return;
+                }
+                const fromUsers = await buildFallbackFromUsers();
+                setClients(fromUsers.filter((c) => clientMatchesTypeFilter(c, options.client_type)));
             }
         } catch (e) {
             console.error("Fetch clients failed", e);
-            setClients(CLIENTS.map((c) => mapClientFromApi(c)).filter(Boolean));
+            try {
+                const roleKey = normalizeRole(currentUser?.role);
+                const requestedTypeNorm = normalizeClientTypeValue(options.client_type);
+                const tenantCustomerOnlyView = (roleKey === 'admin' || roleKey === 'saas_client') && requestedTypeNorm === 'Personal';
+                if (tenantCustomerOnlyView) {
+                    setClients([]);
+                    return;
+                }
+                const fromUsers = await buildFallbackFromUsers();
+                setClients(fromUsers.filter((c) => clientMatchesTypeFilter(c, options.client_type)));
+            } catch (innerErr) {
+                console.error("Fetch fallback clients from users failed", innerErr);
+                setClients([]);
+            }
         }
-    }, []);
+    }, [currentUser?.role]);
 
     const fetchVendors = React.useCallback(async () => {
         try {
             const res = await api.get('/vendors');
-            const data = res.data?.success ? res.data.data : (Array.isArray(res.data) ? res.data : []);
-            setVendors(data.map(v => ({
+            const raw = res.data?.success ? res.data.data : (Array.isArray(res.data) ? res.data : []);
+            const mapped = raw.map(v => ({
                 ...v,
-                status: v.status || 'active',
-                contact: v.contact_name || v.contact || '',
-                delivery: v.delivery || Math.round((v.rating || 0) * 100) || 90,
-            })));
+                name: v.name || v.vendor_name || v.business_name || v.company_name || v.title || 'Partner',
+                status: mapVendorStatusFromApi(v),
+                contact: v.contact_name || v.contact || v.contact_person || '',
+                delivery: (v.delivery ?? v.delivery_performance ?? Math.round((v.rating || 0) * 100)) || 90,
+            }));
+            // Server status is source of truth (pending/inactive until super-admin approval).
+            setVendors(vendorsVisibleInDirectory(mapped, currentUser?.role));
         } catch (e) {
             console.error("Fetch vendors failed", e);
-            setVendors(VENDORS);
+            const seed = VENDORS.map(v => ({
+                ...v,
+                name: v.name || v.vendor_name || v.business_name || v.company_name || v.title || 'Partner',
+                status: mapVendorStatusFromApi(v),
+                contact: v.contact_name || v.contact || v.contact_person || '',
+                delivery: (v.delivery ?? v.delivery_performance ?? Math.round((v.rating || 0) * 100)) || 90,
+            }));
+            setVendors(vendorsVisibleInDirectory(seed, currentUser?.role));
         }
-    }, []);
+    }, [currentUser?.role, currentUser?.id]);
+
+    const marketplaceVendors = React.useMemo(
+        () => (vendors || []).filter((v) => vendorVisibleInSharedLists(v, currentUser?.role)),
+        [vendors, currentUser?.role]
+    );
 
     const fetchInventory = React.useCallback(async () => {
         try {
@@ -390,6 +826,7 @@ export const GlobalDataProvider = ({ children }) => {
             const data = res.data?.success ? res.data.data : (Array.isArray(res.data) ? res.data : []);
             setInventory(data.map(i => ({
                 ...i,
+                image: inventoryImageFromApiRow(i) || '',
                 qty: i.quantity ?? i.qty ?? 0,
                 location: i.warehouse_name || i.location || '',
                 inventoryType: i.inventory_type || i.inventoryType || 'Marketplace',
@@ -397,12 +834,36 @@ export const GlobalDataProvider = ({ children }) => {
                 clientName: i.client_name || i.clientName || '',
                 vendor_id: i.vendor_id ?? i.vendorId ?? null,
                 vendorName: i.vendor_name || i.vendorName || i.vendor || '',
+                category: canonicalMarketplaceCategory(i.category),
+                size: i.size || '',
+                color: i.color || '',
+                material: i.material || '',
+                specifications: i.specifications || '',
+                description: i.description || '',
                 status: i.status === 'in_stock' ? 'Normal' : i.status === 'low_stock' ? 'Warning' : i.status === 'out_of_stock' ? 'Critical' : (i.status || 'Normal'),
             })));
         } catch (e) {
             console.error("Fetch inventory failed", e);
             setInventory(INVENTORY);
         }
+    }, []);
+
+    const fetchStockMovements = React.useCallback(async () => {
+        try {
+            const res = await api.get('/inventory/movements');
+            if (res.data?.success) {
+                setStockMovements(res.data.data.map(m => ({
+                    id: m.id,
+                    item: m.item_name || 'Deleted Asset',
+                    type: m.type,
+                    quantity: m.quantity,
+                    reason: m.reason || 'Routine Adjustment',
+                    issuedBy: m.performed_by_name || 'System User',
+                    date: m.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+                    time: m.created_at?.split('T')[1]?.slice(0, 5) || ''
+                })));
+            }
+        } catch (e) { console.error("Fetch stock movements failed", e); }
     }, []);
 
     const fetchAccessPlans = React.useCallback(async () => {
@@ -471,11 +932,28 @@ export const GlobalDataProvider = ({ children }) => {
         }
     }, []);
 
-    const fetchStaff = React.useCallback(async () => {
+    const fetchStaff = React.useCallback(async (filters = {}) => {
         try {
-            const res = await api.get('/users');
+            const params = {};
+            if (filters?.status) params.status = String(filters.status).toLowerCase();
+            if (filters?.search) params.search = String(filters.search).trim();
+            const res = await api.get('/users', { params });
             if (res.data?.success) {
-                const list = res.data.data;
+                let list = (res.data.data || []).map((u) => normalizeUserForUi(u));
+
+                // Fallback filtering in case backend doesn't yet support these query params.
+                if (filters?.status) {
+                    const want = String(filters.status).toLowerCase();
+                    list = list.filter((u) => String(u?.status || '').toLowerCase() === want);
+                }
+                if (filters?.search) {
+                    const q = String(filters.search).toLowerCase();
+                    list = list.filter((u) =>
+                        String(u?.name || '').toLowerCase().includes(q) ||
+                        String(u?.email || '').toLowerCase().includes(q)
+                    );
+                }
+
                 setUsers(list);
                 return list;
             }
@@ -487,15 +965,21 @@ export const GlobalDataProvider = ({ children }) => {
     }, []);
 
     const [customerUsers, setCustomerUsers] = React.useState([]);
-    const fetchCustomerUsers = React.useCallback(async () => {
+    const fetchCustomerUsers = React.useCallback(async (options = {}) => {
         try {
-            const res = await api.get('/users/customers');
+            const params = new URLSearchParams();
+            if (options.include_all) params.append('include_all', '1');
+            if (options.include_client_role) params.append('include_client_role', '1');
+            const url = `/users/customers${params.toString() ? `?${params.toString()}` : ''}`;
+            const res = await api.get(url);
             if (res.data?.success) {
                 setCustomerUsers(res.data.data);
+                return res.data.data;
             }
         } catch (e) {
             console.error("Fetch customer users failed", e);
         }
+        return [];
     }, []);
 
     const fetchFleet = React.useCallback(async () => {
@@ -536,20 +1020,31 @@ export const GlobalDataProvider = ({ children }) => {
                         db_id: d.id,
                         orderId: orderRef,
                         order_id_raw: d.order_id,
+                        company_id: d.company_id ?? null,
+                        client_id: d.client_id ?? null,
+                        customer_id: d.customer_id ?? null,
                         mission_type: d.mission_type,
                         item: items.length > 0 ? items[0].name : (d.mission_type === 'Chauffeur' ? 'VIP Chauffeur Service' : (orderRef ? `Order ${orderRef}` : 'Internal Mission')),
                         items: items,
+                        package_details: d.package_details,
+                        order_instructions: d.order_instructions || null,
                         status: d.status,
                         driverId: d.assigned_driver ?? d.driver_id ?? d.assigned_to ?? null,
                         driver: d.driver_name,
                         vehicleId: d.plate_number,
                         pickupLocation: d.pickup_location,
+                        drop_location: d.drop_location,
                         dropLocation: d.drop_location,
                         route: d.route,
-                        location: d.route || d.pickup_location || 'In Transit',
+                        location: d.drop_location || d.route || d.pickup_location || 'In Transit',
                         mode: d.mission_type === 'Chauffeur' ? 'Road' : 'Road',
                         deliveryDate: d.delivery_date ? d.delivery_date.split('T')[0] : null,
-                        eta: d.delivery_date ? d.delivery_date.split('T')[0] : 'TBD'
+                        eta: d.delivery_date ? d.delivery_date.split('T')[0] : 'TBD',
+                        delivery_instructions:
+                            d.delivery_instructions || d.order_instructions || d.order_notes || '',
+                        delivery_fee: parseFloat(d.delivery_fee ?? d.total_amount ?? d.amount ?? 0) || 0,
+                        clientConfirmed: !!d.signature,
+                        signature: d.signature
                     };
                 }));
             }
@@ -596,6 +1091,7 @@ export const GlobalDataProvider = ({ children }) => {
             if (res.data?.success) {
                 setQuotes(res.data.data.map(q => ({
                     ...q,
+                    vendorId: q.vendor_id ?? q.vendorId ?? null,
                     vendor: q.vendor_name || q.vendor,
                     vendorName: q.vendor_name || q.vendor,
                     date: q.created_at || q.date,
@@ -615,8 +1111,8 @@ export const GlobalDataProvider = ({ children }) => {
                     if (typeof parsedItems === 'string') {
                         try { parsedItems = JSON.parse(parsedItems); } catch { parsedItems = []; }
                     }
-                    return { 
-                        ...r, 
+                    return {
+                        ...r,
                         items: Array.isArray(parsedItems) ? parsedItems : [],
                         total: r.estimated_cost || r.total,
                         date: r.created_at || r.date
@@ -646,34 +1142,47 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             const res = await api.get('/orders');
             const rawData = res.data?.success ? res.data.data : (Array.isArray(res.data) ? res.data : []);
-            setOrders(rawData.map(o => {
+            const mappedOrders = rawData.map(o => {
                 let parsedItems = o.items;
                 if (typeof parsedItems === 'string') {
                     try { parsedItems = JSON.parse(parsedItems); } catch { parsedItems = []; }
                 }
+                const itemsArr = Array.isArray(parsedItems) ? parsedItems : [];
+                const totalVal = mapOrderDisplayTotal(o, itemsArr);
                 const createdDay = isoDateSlice(o.created_at);
                 const orderDay = isoDateSlice(o.order_date);
                 const dueDay = isoDateSlice(o.due_date);
                 const displayDate = orderDay || createdDay;
+                const statusForUi = o.status;
                 return {
                     ...o,
-                    items: Array.isArray(parsedItems) ? parsedItems : [],
+                    items: itemsArr,
                     clientId: o.customer_id || o.client_id,
                     companyId: o.company_id,
                     vendorId: o.vendor_id,
                     client: o.customer_name || o.client_name || '',
                     vendor: o.vendor_name || '',
-                    total: parseFloat(o.total_amount || 0),
+                    total: totalVal,
+                    total_amount: totalVal,
+                    amount: totalVal,
                     date: displayDate,
                     order_date: orderDay || o.order_date,
                     createdAt: o.created_at,
                     requestDate: displayDate,
                     dueDate: dueDay,
                     due_date: dueDay || o.due_date,
-                    statusLabel: displayOrderStatus(o.status)
+                    status: statusForUi,
+                    statusLabel: displayOrderStatus(statusForUi),
+                    delivery_instructions: o.delivery_instructions || o.deliveryInstructions || null,
+                    location: o.delivery_address || o.location || o.deliveryAddress || '',
                 };
-            }));
-        } catch (e) { console.error("Fetch orders failed", e); }
+            });
+            setOrders(mappedOrders);
+            return mappedOrders;
+        } catch (e) {
+            console.error("Fetch orders failed", e);
+            return null;
+        }
     }, []);
 
     const fetchMissions = React.useCallback(async () => {
@@ -715,7 +1224,7 @@ export const GlobalDataProvider = ({ children }) => {
         const mapStatusToFrontend = (status) => {
             switch (status?.toLowerCase()) {
                 case 'planned': return 'Pending';
-                case 'in_progress': return 'Active';
+                case 'in_progress': return 'In Progress';
                 case 'completed': return 'Completed';
                 case 'on_hold': return 'Cancelled';
                 default: return status || 'Pending';
@@ -743,7 +1252,7 @@ export const GlobalDataProvider = ({ children }) => {
                 api.get('/staff/assignments').catch(e => ({ data: { success: false, data: [] } })),
                 api.get('/staff/leave').catch(e => ({ data: { success: false, data: [] } }))
             ]);
-            
+
             if (assignments.data?.success) {
                 setStaffAssignments(assignments.data.data);
             } else if (Array.isArray(assignments.data)) {
@@ -755,8 +1264,8 @@ export const GlobalDataProvider = ({ children }) => {
             } else if (Array.isArray(leave.data)) {
                 setLeaveRequests(leave.data);
             }
-        } catch (e) { 
-            console.error("Fetch supporting docs failed", e); 
+        } catch (e) {
+            console.error("Fetch supporting docs failed", e);
         }
     }, [currentUser?.id]);
 
@@ -960,7 +1469,8 @@ export const GlobalDataProvider = ({ children }) => {
                 fetchSystemSettings(),
                 fetchInventoryAlerts(),
                 fetchTracking(),
-                fetchUrgentTasks()
+                fetchUrgentTasks(),
+                fetchStockMovements()
             ];
 
             // If the user is staff, fetch their specific data
@@ -1001,16 +1511,7 @@ export const GlobalDataProvider = ({ children }) => {
 
             if (res.data?.success) {
                 setInventory(prev => prev.map(i => i.id === item.id ? { ...i, ...res.data.data, qty: res.data.data.quantity } : i));
-
-                setStockMovements(prev => [{
-                    ...loss,
-                    id: `LS-${Date.now()}`,
-                    type: 'Loss',
-                    value: (item.price || 0) * parseInt(loss.qty),
-                    date: new Date().toISOString().split('T')[0],
-                    time: new Date().toLocaleTimeString()
-                }, ...prev]);
-
+                await fetchStockMovements();
                 addLog({ action: 'Asset Loss Recorded', detail: `Loss of ${loss.qty} units for ${loss.item} noted: ${loss.reason || 'No reason provided'}. Auditor notified.`, type: 'inventory' });
             }
         } catch (error) {
@@ -1021,7 +1522,6 @@ export const GlobalDataProvider = ({ children }) => {
     const addStockEntry = async (entry) => {
         try {
             const item = inventory.find(i => i.name === entry.item);
-
             if (item) {
                 const res = await api.post(`/inventory/${item.id}/adjust`, {
                     quantity: entry.qty,
@@ -1031,38 +1531,96 @@ export const GlobalDataProvider = ({ children }) => {
                 });
 
                 if (res.data?.success) {
-                    setInventory(prev => prev.map(i => i.id === item.id ? { ...i, ...res.data.data, qty: res.data.data.quantity } : i));
+                    const qtyAfter = parseInt(res.data.data.quantity ?? res.data.data.qty ?? item.qty, 10) || 0;
+                    const categoryForApi = canonicalMarketplaceCategory(entry.category ?? item.category);
+                    try {
+                        if (entry.imageFile) {
+                            const formData = new FormData();
+                            formData.append('name', item.name);
+                            formData.append('category', categoryForApi);
+                            formData.append('price', String(parseFloat(item.price) || 0));
+                            formData.append('quantity', String(qtyAfter));
+                            appendInventoryFk(formData, 'warehouse_id', item.warehouse_id ?? item.warehouseId);
+                            appendInventoryFk(formData, 'vendor_id', item.vendor_id ?? item.vendorId);
+                            appendInventoryFk(formData, 'client_id', item.client_id ?? item.clientId);
+                            formData.append('company_id', String(resolveInventoryCompanyId(currentUser, item.company_id ?? item.companyId)));
+                            formData.append('image', entry.imageFile);
+                            await api.put(`/inventory/${item.id}`, formData);
+                        } else {
+                            await api.put(`/inventory/${item.id}`, {
+                                name: item.name,
+                                category: categoryForApi,
+                                price: parseFloat(item.price) || 0,
+                                quantity: qtyAfter,
+                                warehouse_id: nullablePositiveInt(item.warehouse_id ?? item.warehouseId),
+                                vendor_id: nullablePositiveInt(item.vendor_id ?? item.vendorId),
+                                client_id: nullablePositiveInt(item.client_id ?? item.clientId),
+                                company_id: resolveInventoryCompanyId(currentUser, item.company_id ?? item.companyId),
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('Inventory category sync after stock entry failed', e);
+                    }
 
-                    setStockMovements(prev => [{ ...entry, id: `SE-${Date.now()}`, type: 'Entry', date: new Date().toISOString().split('T')[0], time: new Date().toLocaleTimeString() }, ...prev]);
+                    await fetchInventory();
+                    await fetchStockMovements();
 
                     if (entry.prRef) {
                         setPurchaseRequests(prev => prev.map(pr => pr.id === entry.prRef ? { ...pr, status: 'Received' } : pr));
                     }
 
                     addLog({ action: 'Stock Entry', detail: `Procured ${entry.qty} units of ${entry.item} from ${entry.vendor || entry.vendorName || 'Unknown Partner'}.`, type: 'inventory' });
+                    return { ok: true };
                 }
             } else {
-                // If item doesn't exist, create it first, then adjust or create with initial qty
-                const res = await api.post('/inventory', {
-                    name: entry.item,
-                    category: entry.category,
-                    price: entry.price,
-                    quantity: entry.qty,
-                    warehouse_id: entry.warehouseId || entry.warehouse_id || null,
-                    inventory_type: entry.inventoryType || 'Marketplace',
-                    client_id: entry.clientId || null,
-                    sku: entry.sku || `SKU-${Math.floor(Math.random() * 100000)}`
-                });
+                const imageUrl = entry.image_url || entry.imageUrl || entry.image || null;
+                let res;
 
-                if (res.data?.success) {
+                if (entry.imageFile) {
+                    const formData = new FormData();
+                    formData.append('name', entry.item || '');
+                    formData.append('category', canonicalMarketplaceCategory(entry.category));
+                    formData.append('price', String(parseFloat(entry.price) || 0));
+                    formData.append('quantity', String(parseInt(entry.qty) || 0));
+                    appendInventoryFk(formData, 'warehouse_id', entry.warehouseId ?? entry.warehouse_id);
+                    formData.append('inventory_type', entry.inventoryType || 'Marketplace');
+                    appendInventoryFk(formData, 'client_id', entry.clientId);
+                    formData.append('sku', entry.sku || `SKU-${Math.floor(Math.random() * 100000)}`);
+                    appendInventoryFk(formData, 'vendor_id', entry.vendorId ?? entry.vendor_id);
+                    if (imageUrl) formData.append('image_url', String(imageUrl));
+                    formData.append('company_id', String(resolveInventoryCompanyId(currentUser, entry.company_id ?? entry.companyId)));
+                    formData.append('image', entry.imageFile);
+
+                    res = await api.post('/inventory', formData);
+                } else {
+                    const reqData = {
+                        name: entry.item,
+                        category: canonicalMarketplaceCategory(entry.category),
+                        price: entry.price,
+                        quantity: entry.qty,
+                        warehouse_id: nullablePositiveInt(entry.warehouseId ?? entry.warehouse_id),
+                        vendor_id: nullablePositiveInt(entry.vendorId ?? entry.vendor_id),
+                        inventory_type: entry.inventoryType || 'Marketplace',
+                        client_id: nullablePositiveInt(entry.clientId),
+                        company_id: resolveInventoryCompanyId(currentUser, entry.company_id ?? entry.companyId),
+                        image_url: imageUrl,
+                        sku: entry.sku || `SKU-${Math.floor(Math.random() * 100000)}`
+                    };
+                    res = await api.post('/inventory', reqData);
+                }
+
+                if (inventoryWriteResponseOk(res)) {
                     // Re-fetch to ensure correct mapping
                     await fetchInventory();
-                    setStockMovements(prev => [{ ...entry, id: `SE-${Date.now()}`, type: 'Entry', date: new Date().toISOString().split('T')[0], time: new Date().toLocaleTimeString() }, ...prev]);
+                    await fetchStockMovements();
                     addLog({ action: 'Stock Entry', detail: `Procured ${entry.qty} units of ${entry.item} from ${entry.vendor || entry.vendorName || 'Unknown Partner'}.`, type: 'inventory' });
+                    return { ok: true };
                 }
             }
+            return { ok: false, error: 'Stock entry did not complete.' };
         } catch (error) {
             console.error("Failed to add stock entry:", error);
+            return { ok: false, error: error?.response?.data?.message || error?.message || 'Failed to add stock entry.' };
         }
     };
 
@@ -1081,8 +1639,7 @@ export const GlobalDataProvider = ({ children }) => {
             if (res.data?.success) {
                 const updatedItem = { ...item, ...res.data.data, qty: res.data.data.quantity };
                 setInventory(prev => prev.map(i => i.id === item.id ? updatedItem : i));
-
-                setStockMovements(prev => [{ ...issue, id: `SI-${Date.now()}`, type: 'Issue', date: new Date().toISOString().split('T')[0], time: new Date().toLocaleTimeString() }, ...prev]);
+                await fetchStockMovements();
 
                 // Automate low stock alert if needed (local check after update)
                 if (updatedItem.qty < 10) {
@@ -1275,7 +1832,20 @@ export const GlobalDataProvider = ({ children }) => {
     // --- STAFF ACTIONS ---
     const addUser = async (user) => {
         try {
-            const res = await api.post('/users', user);
+            const cleaned = { ...user };
+            const normalizedCompanyId = normalizeCompanyIdForApi(
+                cleaned.company_id ?? cleaned.companyId
+            );
+
+            if (normalizedCompanyId === undefined) {
+                delete cleaned.company_id;
+                delete cleaned.companyId;
+            } else {
+                cleaned.company_id = normalizedCompanyId;
+                cleaned.companyId = normalizedCompanyId;
+            }
+
+            const res = await api.post('/users', cleaned);
             if (res.data?.success) {
                 await fetchStaff();
                 addLog({ action: 'Staff Provisioned', detail: `Onboarded ${user.name} as ${user.role}.`, type: 'system' });
@@ -1296,10 +1866,25 @@ export const GlobalDataProvider = ({ children }) => {
                 console.error('updateUser: missing user id');
                 return;
             }
-            const res = await api.put(`/users/${id}`, updated);
+            const safePayload = withoutPassword(updated);
+            const bank = safePayload?.bankingInfo?.bank ?? safePayload.bankName ?? safePayload.bank_name;
+            const account = safePayload?.bankingInfo?.account ?? safePayload.accountNumber ?? safePayload.account_number;
+            const routing = safePayload?.bankingInfo?.routing ?? safePayload.routingNumber ?? safePayload.routing_number;
+            const payload = {
+                ...safePayload,
+                bank_name: bank,
+                bankName: bank,
+                account_number: account,
+                accountNumber: account,
+                routing_number: routing,
+                routingNumber: routing,
+                vacation_balance: safePayload.vacationBalance ?? safePayload.vacation_balance,
+                vacationBalance: safePayload.vacationBalance ?? safePayload.vacation_balance,
+            };
+            const res = await api.put(`/users/${id}`, payload);
             if (res.data?.success) {
-                const apiUser = normalizeApiUserPayload(res.data.data);
-                const safePayload = withoutPassword(updated);
+                const apiUser = normalizeUserForUi(normalizeApiUserPayload(res.data.data));
+                const normalizedPayload = normalizeUserForUi(payload);
 
                 const list = await fetchStaff();
                 setUsers((prev) => {
@@ -1307,13 +1892,13 @@ export const GlobalDataProvider = ({ children }) => {
                     if (!Array.isArray(baseList)) return prev;
                     return baseList.map((u) => {
                         if (String(u.id) !== String(id)) return u;
-                        return mergeUserFields(u, apiUser, safePayload);
+                        return normalizeUserForUi(mergeUserFields(u, apiUser, normalizedPayload));
                     });
                 });
 
                 setCurrentUser((cur) => {
                     if (!cur || String(cur.id) !== String(id)) return cur;
-                    const next = mergeUserFields(cur, apiUser, safePayload);
+                    const next = normalizeUserForUi(mergeUserFields(cur, apiUser, normalizedPayload));
                     try {
                         localStorage.setItem('user', JSON.stringify(next));
                     } catch (e) {
@@ -1397,32 +1982,52 @@ export const GlobalDataProvider = ({ children }) => {
                 const statusRaw = typeof data === 'string' ? data : data.status;
                 const normalized = normalizeOrderStatusForApi(statusRaw);
                 if (!normalized) {
-                    alert(`Invalid workflow status "${statusRaw}". Use a known stage (e.g. admin_review, operation, logistics, completed).`);
+                    alert(`Invalid workflow status "${statusRaw}". Use a known stage (e.g. admin_review, concierge, operation, logistics, completed).`);
                     return;
                 }
                 await api.patch(`/orders/${numericParam}/status`, { status: normalized });
                 setOrders(prev => prev.map(o => String(o.id) === String(orderId) || String(o.id) === String(numericParam) ? { ...o, status: normalized } : o));
                 addLog({ action: 'Order Updated', detail: `Order ${orderId} status changed to ${normalized}.`, type: 'system' });
+                await fetchOrders();
                 return;
             }
 
             const { status: uiStatusRaw, ...rest } = data;
             const normalizedFromForm = normalizeOrderStatusForApi(uiStatusRaw);
+            let statusPatched = false;
 
-            const mappedData = {
-                ...rest,
-                client_id: rest.clientId,
-                company_id: rest.companyId,
-                vendor_id: rest.vendorId,
+            // PATCH status first: PUT can return 400 "No fields to update" when only status changed, which blocked saves.
+            if (normalizedFromForm) {
+                await api.patch(`/orders/${numericParam}/status`, { status: normalizedFromForm });
+                statusPatched = true;
+            }
+
+            const putCandidate = {
+                client_id: rest.clientId ?? rest.client_id,
+                company_id: rest.companyId ?? rest.company_id,
+                vendor_id: rest.vendorId ?? rest.vendor_id,
+                type: rest.type,
+                items: rest.items,
+                notes: rest.notes,
+                location: rest.location,
                 total_amount: rest.total,
                 due_date: isoDateSlice(rest.dueDate || rest.due_date) || null,
                 order_date: isoDateSlice(rest.date || rest.requestDate || rest.order_date) || undefined
             };
-
-            await api.put(`/orders/${numericParam}`, mappedData);
-
-            if (normalizedFromForm) {
-                await api.patch(`/orders/${numericParam}/status`, { status: normalizedFromForm });
+            const putBody = {};
+            for (const [k, val] of Object.entries(putCandidate)) {
+                if (val === undefined) continue;
+                if (val === '' && ['client_id', 'vendor_id', 'company_id'].includes(k)) continue;
+                putBody[k] = val;
+            }
+            if (Object.keys(putBody).length > 0) {
+                try {
+                    await api.put(`/orders/${numericParam}`, putBody);
+                } catch (putError) {
+                    // Keep status change durable even if generic profile update fails.
+                    if (!statusPatched) throw putError;
+                    console.warn('Order detail PUT failed after successful status PATCH:', putError?.response?.data || putError?.message);
+                }
             }
 
             await fetchOrders();
@@ -1439,10 +2044,88 @@ export const GlobalDataProvider = ({ children }) => {
             const res = await api.put(`/orders/${orderId}/assign`, { stage, assigned_to: assignedTo, notes });
             if (res.data?.success) {
                 await fetchOrders();
-                addLog({ 
-                    action: 'Stage Transition', 
-                    detail: `Order ${orderId} moved to ${stage} stage.`, 
-                    type: 'system' 
+                const stageNorm = String(stage || '').toLowerCase();
+                if (stageNorm === 'logistics' && orderId != null) {
+                    try {
+                        const delRes = await api.get('/logistics/deliveries');
+                        const rawDel = delRes.data?.success ? delRes.data.data : [];
+                        const hasForOrder = Array.isArray(rawDel) && rawDel.some((d) => Number(d.order_id) === Number(orderId));
+                        if (!hasForOrder) {
+                            const ordRes = await api.get('/orders');
+                            const ordList = ordRes.data?.success ? ordRes.data.data : (Array.isArray(ordRes.data) ? ordRes.data : []);
+                            const o = ordList.find((x) => String(x.id) === String(orderId));
+                            if (o) {
+                                let parsedItems = o.items;
+                                if (typeof parsedItems === 'string') {
+                                    try { parsedItems = JSON.parse(parsedItems); } catch { parsedItems = []; }
+                                }
+                                const itemsArr = Array.isArray(parsedItems) ? parsedItems : [];
+                                const totalAmountVal = mapOrderDisplayTotal(o, itemsArr);
+                                const orderDateVal = isoDateSlice(o.order_date || o.created_at);
+                                const dueVal = isoDateSlice(o.due_date);
+                                const dropAddr = o.delivery_address || o.location || o.deliveryAddress || '';
+                                const firstItemName = itemsArr[0]?.name || 'Order';
+                                await addDelivery({
+                                    orderId,
+                                    company_id: o.company_id ?? null,
+                                    client_id: o.client_id ?? o.customer_id ?? null,
+                                    customer_id: o.customer_id ?? null,
+                                    missionType: 'Delivery',
+                                    location: dropAddr,
+                                    driver: '',
+                                    vehicleId: '',
+                                    items: itemsArr,
+                                    pickupLocation: 'Fulfilment Hub',
+                                    dropLocation: dropAddr,
+                                    dueDate: dueVal || orderDateVal,
+                                    status: 'Pending Pickup',
+                                    delivery_instructions: o.delivery_instructions || o.deliveryInstructions || null,
+                                    delivery_fee: totalAmountVal,
+                                });
+                                await addStaffAssignment({
+                                    assigneeId: assignedTo ?? null,
+                                    task: `Dispatch Order #${orderId} - ${firstItemName}`,
+                                    location: dropAddr || 'Client location',
+                                    status: 'Pending',
+                                    priority: 'Normal',
+                                    missionType: 'Delivery',
+                                    pickupLocation: 'Fulfilment Hub',
+                                    deliveryLocation: dropAddr || ''
+                                });
+                            }
+                        }
+                    } catch (ensureErr) {
+                        console.warn('Could not ensure delivery queue after logistics stage:', ensureErr?.response?.data || ensureErr?.message);
+                    }
+                } else if (stageNorm === 'concierge' && orderId != null) {
+                    try {
+                        const ordRes = await api.get('/orders');
+                        const ordList = ordRes.data?.success ? ordRes.data.data : (Array.isArray(ordRes.data) ? ordRes.data : []);
+                        const o = ordList.find((x) => String(x.id) === String(orderId));
+                        if (o) {
+                            const customLabel = String(o.custom_request_category || o.customRequestCategory || '')
+                                .replace(/_/g, ' ')
+                                .trim() || 'Custom request';
+                            const dropAddr = o.delivery_address || o.location || o.deliveryAddress || '';
+                            await addStaffAssignment({
+                                assigneeId: assignedTo ?? null,
+                                task: `Concierge triage: Order #${orderId} — ${customLabel}`,
+                                location: dropAddr || 'Client location',
+                                status: 'Pending',
+                                priority: 'High',
+                                missionType: 'Concierge',
+                                pickupLocation: 'Concierge desk',
+                                deliveryLocation: dropAddr || ''
+                            });
+                        }
+                    } catch (conciergeErr) {
+                        console.warn('Could not enqueue concierge desk assignment:', conciergeErr?.response?.data || conciergeErr?.message);
+                    }
+                }
+                addLog({
+                    action: 'Stage Transition',
+                    detail: `Order ${orderId} moved to ${stage} stage.`,
+                    type: 'system'
                 });
                 return res.data;
             }
@@ -1515,7 +2198,7 @@ export const GlobalDataProvider = ({ children }) => {
                     if (!hasLinkedDelivery) {
                         await addDelivery({
                             orderId: mission.orderId || null,
-                            missionType: mission.missionType || mission.mission_type || 'Logistics',
+                            missionType: mission.missionType || mission.mission_type || 'Delivery',
                             location: mission.route || mission.location || '',
                             driver: mission.driverName || mission.driver_name || '',
                             vehicleId: mission.plateNumber || mission.vehicleId || mission.plate_number || '',
@@ -1592,16 +2275,48 @@ export const GlobalDataProvider = ({ children }) => {
 
         try {
             const userRole = (currentUser?.role || '').toLowerCase().replace(/\s+/g, '_');
+            const roleKey = normalizeRole(currentUser?.role);
+            const tenantTypeKey = String(currentUser?.tenant_type || currentUser?.tenantType || '').trim().toLowerCase();
             const isCustomer = userRole === 'customer';
+            const isBusinessTenant = tenantTypeKey === 'saas' || tenantTypeKey === 'business' || ['client', 'saas_client', 'admin'].includes(roleKey);
+            const isPersonalAutoChargeUser = roleKey === 'customer' && !isBusinessTenant;
             const hqCompanyId = Number(import.meta.env?.VITE_DEFAULT_COMPANY_ID) || 1;
-            const orderDateVal = isoDateSlice(order.order_date || order.orderDate || order.date || order.requestDate) || isoDateSlice(new Date().toISOString());
+            const scopedCompanyId = currentUser?.company_id || currentUser?.companyId || null;
+            /** Personal marketplace orders must use the customer's linked company when set, so that company's admin sees them in /orders. */
+            const customerOrderCompanyId = isCustomer
+                ? (normalizeCompanyIdForApi(scopedCompanyId) ?? hqCompanyId)
+                : null;
+            const orderDateVal = isoDateSlice(order.order_date || order.orderDate || order.date || order.requestDate) || localDateISO();
             const dueVal = isoDateSlice(order.dueDate || order.due_date || null);
+            const orderKindNorm = String(order.order_kind || order.orderKind || 'marketplace').toLowerCase();
+            const customCategory = String(order.custom_request_category || order.customRequestCategory || '').toLowerCase();
+            const isCustomRequestOrder = orderKindNorm === 'custom_request' || customCategory !== '';
+            /** Marketplace customer checkout: route via operations first so create payload does not imply dispatch yet (`logistics` route can coerce order status to Out for Delivery on some backends). Custom requests: always concierge routing after admin (not straight to operation/procurement). */
+            const routedDepartment = (() => {
+                if (isCustomRequestOrder) return 'concierge';
+                if (customerCheckout) return 'operations';
+                return 'logistics';
+            })();
+            /** Marketplace + bespoke: start in `admin_review`. Custom requests must not default to `operation`/`procurement` at create — concierge triage comes after admin approve. */
+            const requestedStatus = normalizeOrderStatusForApi(order.status)
+                || (isCustomRequestOrder
+                    ? 'admin_review'
+                    : (normalizeOrderStatusForApi('pending_review') || 'admin_review'));
+            const totalAmountVal = (() => {
+                const direct = parseFloat(order.estimated_total ?? order.total_amount ?? order.total ?? 0);
+                if (Number.isFinite(direct) && !Number.isNaN(direct) && direct >= 0) return direct;
+                return Number.isFinite(total) && !Number.isNaN(total) ? total : 0;
+            })();
+            const subtotalVal = (() => {
+                const sub = parseFloat(order.subtotal ?? totalAmountVal);
+                return Number.isFinite(sub) && !Number.isNaN(sub) ? sub : totalAmountVal;
+            })();
 
             const res = await api.post('/orders', {
                 customer_id: isCustomer ? currentUser?.id : targetClientId,
                 company_id: isCustomer
-                    ? hqCompanyId
-                    : ((currentUser && userRole !== 'super_admin') ? (currentUser.company_id || currentUser.companyId) : targetClientId),
+                    ? customerOrderCompanyId
+                    : (userRole !== 'super_admin' ? scopedCompanyId : (order.company_id || order.companyId || targetClientId)),
                 vendor_id: order.vendorId != null ? order.vendorId : (order.vendor_id != null ? order.vendor_id : null),
                 type: order.type || order.orderType || 'Marketplace Order',
                 items: order.items,
@@ -1613,23 +2328,83 @@ export const GlobalDataProvider = ({ children }) => {
                 due_date: dueVal || null,
                 order_kind: order.order_kind || order.orderKind || 'marketplace',
                 delivery_mode: order.deliveryType || order.delivery_mode || order.deliveryMode,
+                routed_department: routedDepartment,
+                route_department: routedDepartment,
+                total_amount: totalAmountVal,
+                subtotal: subtotalVal,
+                estimated_total: totalAmountVal,
+                status: requestedStatus,
                 book_chauffeur: !!(order.bookChauffeur || order.book_chauffeur),
                 custom_request_category: order.custom_request_category || order.customRequestCategory || null,
-                concierge_member: !!(currentUser?.concierge_member || currentUser?.conciergeMembership)
+                concierge_member: !!(currentUser?.concierge_member || currentUser?.conciergeMembership),
+                delivery_instructions: order.delivery_instructions || order.deliveryInstructions || null,
             });
+
+            const newId = res.data?.data?.id ?? res.data?.data ?? res.data?.id;
+            // Some backends ignore create-time status defaults. Enforce routed status where role allows.
+            if (requestedStatus && newId != null && roleCanUpdateOrderStatus(normalizeRole(currentUser?.role))) {
+                try {
+                    await api.patch(`/orders/${newId}/status`, { status: requestedStatus });
+                } catch (statusErr) {
+                    console.warn('Could not enforce routed status after order create:', statusErr?.response?.data || statusErr?.message);
+                }
+            }
+
+            /** Staff-created orders: enqueue delivery + field task immediately. Marketplace checkout: defer until admin workflow reaches logistics (see `assignOrderToStage`) so customer-facing status stays admin_review / not "Out for Delivery". */
+            if (!isCustomRequestOrder && newId != null && !customerCheckout) {
+                try {
+                    await addDelivery({
+                        orderId: newId,
+                        company_id: isCustomer ? customerOrderCompanyId : (currentUser?.company_id || currentUser?.companyId || null),
+                        client_id: targetClientId || null,
+                        customer_id: isCustomer ? (currentUser?.id || null) : null,
+                        // DB `mission_type` is constrained; keep canonical short value.
+                        missionType: 'Delivery',
+                        location: order.deliveryAddress || order.location || '',
+                        driver: '',
+                        vehicleId: '',
+                        items: order.items || [],
+                        pickupLocation: 'Fulfilment Hub',
+                        dropLocation: order.deliveryAddress || order.location || '',
+                        dueDate: dueVal || orderDateVal,
+                        status: 'Pending Pickup',
+                        delivery_instructions: order.delivery_instructions || order.deliveryInstructions || null,
+                        delivery_fee: totalAmountVal,
+                    });
+                } catch (queueErr) {
+                    console.warn('Could not enqueue normal order for delivery team:', queueErr?.response?.data || queueErr?.message);
+                }
+                // Marketplace/normal orders should be visible directly to field staff queue.
+                try {
+                    const firstItemName = (order.items || [])[0]?.name || 'Marketplace order';
+                    await addStaffAssignment({
+                        assigneeId: null,
+                        task: `Dispatch Order #${newId} - ${firstItemName}`,
+                        location: order.deliveryAddress || order.location || 'Client location',
+                        status: 'Pending',
+                        priority: 'Normal',
+                        missionType: 'Delivery',
+                        pickupLocation: 'Fulfilment Hub',
+                        deliveryLocation: order.deliveryAddress || order.location || ''
+                    });
+                } catch (assignErr) {
+                    console.warn('Could not create field staff assignment for normal order:', assignErr?.response?.data || assignErr?.message);
+                }
+            }
+            /** Custom / bespoke: no immediate Ops/Procurement staff row — admin approves → `concierge` stage, then `assignOrderToStage` creates the concierge desk assignment. */
 
             // Re-fetch to ensure sync and correct mapping
             await fetchOrders();
 
-            const newId = res.data?.data?.id ?? res.data?.data ?? res.data?.id;
-
-            // Personal (non–business) accounts: immediately raise invoice + settlement record when finance API is available.
-            if (isCustomer && newId != null) {
+            let charged = !isPersonalAutoChargeUser;
+            let chargeError = null;
+            // Personal (non-business) accounts: immediately raise invoice + settlement record.
+            if (isPersonalAutoChargeUser && newId != null) {
                 try {
                     const invRes = await api.post('/finance/invoices', buildFinanceInvoiceCreatePayload({
                         orderId: newId,
                         clientId: currentUser?.id ?? null,
-                        totalAmount: total,
+                        totalAmount: totalAmountVal,
                         dueDate: orderDateVal,
                         paidAmount: 0,
                         status: 'unpaid',
@@ -1638,14 +2413,18 @@ export const GlobalDataProvider = ({ children }) => {
                     const invId = payload?.id ?? payload?.invoice_id ?? payload;
                     if (invId != null && String(invId).match(/^\d+$/)) {
                         await api.post(`/finance/invoices/${invId}/pay`, {
-                            amount: total,
+                            amount: totalAmountVal,
                             payment_method: 'Instant checkout (personal)',
                             transaction_id: `AUTO-${Date.now()}`
                         });
                         await fetchFinance();
+                        charged = true;
+                    } else {
+                        chargeError = 'Invoice ID missing after invoice creation.';
                     }
                 } catch (e) {
-                    console.warn('Personal auto-charge skipped (finance endpoint or payload):', e?.response?.data || e?.message);
+                    chargeError = e?.response?.data?.message || e?.message || 'Auto-charge failed.';
+                    console.warn('Personal auto-charge failed:', e?.response?.data || e?.message);
                 }
             }
 
@@ -1658,7 +2437,7 @@ export const GlobalDataProvider = ({ children }) => {
                 detail: `${newId} submitted by client.`,
                 type: 'system'
             });
-            return { ok: true, id: newId };
+            return { ok: true, id: newId, charged, chargeError };
         } catch (error) {
             console.error("Failed to submit order:", error);
             const hint = error.response?.data?.message || error.message;
@@ -1742,11 +2521,21 @@ export const GlobalDataProvider = ({ children }) => {
                     : del.orderId;
                 if (!isNaN(parsed)) sanitizedOrderId = parsed;
             }
+            const rawStatus = String(del.status || 'pending').toLowerCase().replace(/\s+/g, '_');
+            const createStatusMap = {
+                pending_pickup: 'pending',
+                pending_review: 'pending',
+                in_transit: 'en_route',
+                completed: 'delivered'
+            };
+            const apiCreateStatus = createStatusMap[rawStatus] || rawStatus;
 
             const reqData = {
                 order_id: sanitizedOrderId,
                 company_id: del.company_id || null,
-                mission_type: del.missionType || del.mission_type || 'Delivery',
+                client_id: del.client_id || del.clientId || null,
+                customer_id: del.customer_id || del.customerId || null,
+                mission_type: ['Delivery', 'Pickup', 'Transfer', 'Chauffeur'].includes(del.missionType || del.mission_type) ? (del.missionType || del.mission_type) : 'Delivery',
                 route: del.location || del.route || '',
                 driver_name: del.driver || del.driver_name || '',
                 plate_number: del.vehicleId || del.plate_number || '',
@@ -1756,7 +2545,9 @@ export const GlobalDataProvider = ({ children }) => {
                 passenger_info: del.passengerInfo || del.passenger_info || null,
                 delivery_date: del.dueDate || del.delivery_date || null,
                 pickup_time: del.pickup_time || null,
-                status: (del.status || 'pending').toLowerCase().replace(/\s+/g, '_')
+                delivery_instructions: del.delivery_instructions || null,
+                delivery_fee: del.delivery_fee || 0,
+                status: apiCreateStatus
             };
             const res = await api.post('/logistics/deliveries', reqData);
             if (res.data.success) {
@@ -1786,6 +2577,8 @@ export const GlobalDataProvider = ({ children }) => {
             in_transit: 'en_route',
             pending_pickup: 'pending',
             pending_review: 'pending',
+            /** Admin approved — still awaiting driver on logistics row */
+            approved: 'pending',
             accepted: 'assigned',
             declined: 'cancelled',
             delivered: 'delivered',
@@ -1813,10 +2606,22 @@ export const GlobalDataProvider = ({ children }) => {
         }
 
         try {
-            await api.patch(`/logistics/deliveries/${patchId}/status`, {
+            const patchBody = {
                 status: apiStatus,
                 vehicle_id: updated.vehicle_db_id
-            });
+            };
+            if (updated.driver != null || updated.driver_name != null) {
+                patchBody.driver_name = updated.driver ?? updated.driver_name ?? '';
+            }
+            if (updated.vehicleId != null || updated.plate_number != null) {
+                patchBody.plate_number = updated.vehicleId ?? updated.plate_number ?? '';
+            }
+            const assignId = updated.assigned_driver ?? updated.driverId ?? updated.driver_id;
+            if (assignId != null && assignId !== '' && assignId !== undefined) {
+                const n = Number(assignId);
+                patchBody.assigned_driver = Number.isFinite(n) && !Number.isNaN(n) ? n : assignId;
+            }
+            await api.patch(`/logistics/deliveries/${patchId}/status`, patchBody);
 
             await fetchDeliveries();
             if (updated.status === 'Delivered' || updated.status === 'Completed') {
@@ -1898,13 +2703,13 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             // id might be 'DEL-001' or numeric. The API expects numeric ID.
             const numericId = typeof id === 'string' && id.includes('-') ? id.split('-')[1] : id;
-            
+
             await api.patch(`/logistics/deliveries/${numericId}/status`, { status: 'delivered', signature });
-            
+
             // Sync local state
             await fetchDeliveries();
             await fetchOrders();
-            
+
             addLog({ action: 'Delivery Confirmed', detail: `Client signature received for shipment ${id}.`, type: 'success' });
         } catch (error) {
             console.error("Failed to confirm delivery:", error);
@@ -1915,22 +2720,23 @@ export const GlobalDataProvider = ({ children }) => {
     const addVendor = async (vendor) => {
         try {
             const companyId = currentUser?.company_id ?? currentUser?.companyId;
-            const roleNorm = String(currentUser?.role || '').toLowerCase().replace(/\s+/g, '');
-            const isSuperAdmin = roleNorm === 'superadmin';
-            const vendorWithGate = { ...vendor };
-            if (isSuperAdmin) {
-                const st = String(vendor.status || 'active').toLowerCase();
-                vendorWithGate.status = ['active', 'inactive', 'blacklisted'].includes(st) ? st : 'active';
-            } else {
-                vendorWithGate.status = 'inactive';
-            }
+            const vendorWithGate = { ...vendor, status: 'inactive' };
             const reqData = buildVendorApiBody(vendorWithGate, companyId);
+            reqData.status = 'inactive';
             const res = await api.post('/vendors', reqData);
 
             // Re-fetch to ensure correct mapping and sync
             await fetchVendors();
 
-            addLog({ action: 'Vendor Onboarding', detail: `Registered ${vendor.name} as verified partner.`, type: 'system' });
+            addLog({
+                action: 'Vendor Onboarding',
+                detail: `${vendor.name || 'Vendor'} saved as pending — hidden from marketplace until a Super Admin approves (Active).`,
+                type: 'system'
+            });
+            await swalInfo(
+                'Awaiting Super Admin approval',
+                'This vendor is saved as pending. It will appear in the marketplace and vendor pickers only after a Super Admin approves it from Vendor directory.'
+            );
             return res.data;
         } catch (error) {
             console.error("Failed to add vendor:", error);
@@ -1949,6 +2755,15 @@ export const GlobalDataProvider = ({ children }) => {
             const companyId = currentUser?.company_id ?? currentUser?.companyId;
             const reqData = buildVendorApiBody(updated, companyId);
             const res = await api.put(`/vendors/${pathId}`, reqData);
+            const nextStatus = String(updated?.status || '').trim().toLowerCase();
+            if (nextStatus === 'active') {
+                const nextOverrides = (pendingVendorOverrideIds || []).filter((id) => String(id) !== String(updated.id));
+                setPendingVendorOverrideIds(nextOverrides);
+                writePendingVendorOverrides(nextOverrides);
+                const nextDrafts = (pendingVendorDrafts || []).filter((x) => String(x?.id) !== String(updated.id));
+                setPendingVendorDrafts(nextDrafts);
+                writePendingVendorDrafts(nextDrafts);
+            }
 
             // Re-fetch to ensure sync
             await fetchVendors();
@@ -1964,14 +2779,13 @@ export const GlobalDataProvider = ({ children }) => {
     const deleteVendor = async (id) => {
         try {
             const pathId = vendorPathId(id);
-            if (!pathId) {
-                const err = new Error('Invalid vendor ID.');
-                err.code = 'VALIDATION';
-                throw err;
-            }
             await api.delete(`/vendors/${pathId}`);
-            await fetchVendors();
+            
+            setVendors(prev => prev.filter(v => v.id !== id));
             addLog({ action: 'Vendor Removal', detail: `Decommissioned vendor reference ID ${id}.`, type: 'system' });
+            
+            // Re-fetch to be absolutely sure
+            await fetchVendors();
         } catch (error) {
             console.error("Failed to delete vendor:", error);
             throw error;
@@ -1981,40 +2795,100 @@ export const GlobalDataProvider = ({ children }) => {
 
     const addInventory = async (item) => {
         try {
-            const reqData = {
-                name: item.name,
-                category: item.category,
-                price: parseFloat(item.price) || 0,
-                quantity: parseInt(item.qty) || 0, // Frontend uses qty
-                warehouse_id: item.warehouse_id || item.warehouseId || null,
-                vendor_id: item.vendorId || null,
-                inventory_type: item.inventoryType || 'Marketplace',
-                client_id: item.clientId || null,
-                sku: item.sku || `SKU-${Math.floor(Math.random() * 10000)}`
-            };
-            const res = await api.post('/inventory', reqData);
+            const imageUrl = item.image_url || item.imageUrl || item.image || null;
+            let res;
+
+            if (item.imageFile) {
+                const formData = new FormData();
+                formData.append('name', item.name || '');
+                formData.append('category', canonicalMarketplaceCategory(item.category));
+                formData.append('price', String(parseFloat(item.price) || 0));
+                formData.append('quantity', String(parseInt(item.qty) || 0));
+                appendInventoryFk(formData, 'warehouse_id', item.warehouse_id ?? item.warehouseId);
+                appendInventoryFk(formData, 'vendor_id', item.vendorId ?? item.vendor_id);
+                formData.append('inventory_type', item.inventoryType || 'Marketplace');
+                appendInventoryFk(formData, 'client_id', item.clientId);
+                formData.append('sku', item.sku || `SKU-${Math.floor(Math.random() * 10000)}`);
+                if (imageUrl) formData.append('image_url', String(imageUrl));
+                formData.append('company_id', String(resolveInventoryCompanyId(currentUser, item.company_id ?? item.companyId)));
+                formData.append('image', item.imageFile);
+
+                res = await api.post('/inventory', formData);
+            } else {
+                const reqData = {
+                    name: item.name,
+                    category: canonicalMarketplaceCategory(item.category),
+                    price: parseFloat(item.price) || 0,
+                    quantity: parseInt(item.qty) || 0,
+                    warehouse_id: nullablePositiveInt(item.warehouse_id ?? item.warehouseId),
+                    vendor_id: nullablePositiveInt(item.vendorId ?? item.vendor_id),
+                    inventory_type: item.inventoryType || 'Marketplace',
+                    client_id: nullablePositiveInt(item.clientId),
+                    company_id: resolveInventoryCompanyId(currentUser, item.company_id ?? item.companyId),
+                    image_url: imageUrl,
+                    sku: item.sku || `SKU-${Math.floor(Math.random() * 10000)}`
+                };
+                res = await api.post('/inventory', reqData);
+            }
+
+            if (!inventoryWriteResponseOk(res)) {
+                const msg = res?.data?.message || res?.data?.error || 'Inventory create was not accepted by the server.';
+                throw new Error(msg);
+            }
 
             // Re-fetch to sync and map
             await fetchInventory();
 
             addLog({ action: 'Asset Intake', detail: `Ingested ${item.name} into Warehouse.`, type: 'system' });
+            return res.data;
         } catch (error) {
             console.error("Failed to add inventory item:", error);
+            throw error;
         }
     };
 
     const updateInventory = async (updated) => {
         try {
-            const reqData = {
-                name: updated.name,
-                category: updated.category,
-                price: parseFloat(updated.price) || 0,
-                quantity: parseInt(updated.qty) || 0,
-                warehouse_id: updated.warehouse_id || updated.warehouseId || null,
-                vendor_id: updated.vendorId || null,
-                client_id: updated.clientId || null
-            };
-            await api.put(`/inventory/${updated.id}`, reqData);
+            const imageUrl = updated.image_url || updated.imageUrl || updated.image || null;
+
+            if (updated.imageFile) {
+                const formData = new FormData();
+                formData.append('name', updated.name || '');
+                formData.append('category', canonicalMarketplaceCategory(updated.category));
+                formData.append('price', String(parseFloat(updated.price) || 0));
+                formData.append('quantity', String(parseInt(updated.qty) || 0));
+                appendInventoryFk(formData, 'warehouse_id', updated.warehouse_id ?? updated.warehouseId);
+                appendInventoryFk(formData, 'vendor_id', updated.vendorId ?? updated.vendor_id);
+                appendInventoryFk(formData, 'client_id', updated.clientId);
+                if (imageUrl) formData.append('image_url', String(imageUrl));
+                formData.append('company_id', String(resolveInventoryCompanyId(currentUser, updated.company_id ?? updated.companyId)));
+                formData.append('image', updated.imageFile);
+                formData.append('inventory_type', updated.inventoryType || updated.inventory_type || 'Marketplace');
+                if (updated.sku) formData.append('sku', String(updated.sku));
+
+                const putRes = await api.put(`/inventory/${updated.id}`, formData);
+                if (!inventoryWriteResponseOk(putRes)) {
+                    throw new Error(putRes?.data?.message || putRes?.data?.error || 'Inventory update failed.');
+                }
+            } else {
+                const reqData = {
+                    name: updated.name,
+                    category: canonicalMarketplaceCategory(updated.category),
+                    price: parseFloat(updated.price) || 0,
+                    quantity: parseInt(updated.qty) || 0,
+                    warehouse_id: nullablePositiveInt(updated.warehouse_id ?? updated.warehouseId),
+                    vendor_id: nullablePositiveInt(updated.vendorId ?? updated.vendor_id),
+                    client_id: nullablePositiveInt(updated.clientId),
+                    company_id: resolveInventoryCompanyId(currentUser, updated.company_id ?? updated.companyId),
+                    inventory_type: updated.inventoryType || updated.inventory_type || 'Marketplace',
+                    sku: updated.sku || undefined,
+                    image_url: imageUrl
+                };
+                const putRes = await api.put(`/inventory/${updated.id}`, reqData);
+                if (!inventoryWriteResponseOk(putRes)) {
+                    throw new Error(putRes?.data?.message || putRes?.data?.error || 'Inventory update failed.');
+                }
+            }
 
             // Re-fetch to sync
             await fetchInventory();
@@ -2022,6 +2896,7 @@ export const GlobalDataProvider = ({ children }) => {
             addLog({ action: 'Inventory Update', detail: `Asset ${updated.name} protocol modified.`, type: 'system' });
         } catch (error) {
             console.error("Failed to update inventory item:", error);
+            throw error;
         }
     };
 
@@ -2029,6 +2904,7 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             await api.delete(`/inventory/${id}`);
             setInventory(prev => prev.filter(i => i.id !== id));
+            await fetchInventory();
             addLog({ action: 'Asset Decommission', detail: `Removed asset ID ${id} from ledger.`, type: 'system' });
         } catch (error) {
             console.error("Failed to delete inventory item:", error);
@@ -2139,8 +3015,18 @@ export const GlobalDataProvider = ({ children }) => {
             await api.delete(`/clients/${id}`);
             setClients(prev => prev.filter(c => c.id !== id));
             addLog({ action: 'Client Decommission', detail: `Removed client reference ${id}.`, type: 'system' });
+            return { success: true, deletedFrom: 'clients' };
         } catch (error) {
             console.error("Failed to delete client:", error);
+            const msg = String(error?.response?.data?.message || error?.message || '').toLowerCase();
+            if (msg.includes('client record not found')) {
+                await api.delete(`/users/${id}`);
+                setClients(prev => prev.filter(c => String(c.id) !== String(id) && String(c.signup_user_id) !== String(id)));
+                await fetchStaff();
+                addLog({ action: 'Client Decommission', detail: `Removed signup user ${id} from users ledger.`, type: 'alert' });
+                return { success: true, deletedFrom: 'users' };
+            }
+            throw error;
         }
     };
 
@@ -2368,9 +3254,14 @@ export const GlobalDataProvider = ({ children }) => {
 
     const addQuote = async (quote) => {
         try {
+            const parsedVendorId = parseInt(String(quote.vendorId ?? quote.vendor_id ?? '').trim(), 10);
+            const normalizedVendorId = Number.isFinite(parsedVendorId) && parsedVendorId > 0 ? parsedVendorId : null;
             const res = await api.post('/procurement/quotes', {
                 ...quote,
+                vendor_id: normalizedVendorId,
+                vendor_name: quote.vendor_name || quote.vendor || '',
                 quote_type: quote.quoteType ?? quote.quote_type ?? 'client',
+                payment_terms: quote.paymentTerms ?? quote.payment_terms ?? 'Net 30',
             });
             if (res.data?.success) {
                 await fetchQuotes();
@@ -2654,30 +3545,50 @@ export const GlobalDataProvider = ({ children }) => {
 
     const fetchChauffeurRequests = React.useCallback(async () => {
         try {
-            const res = await api.get('/support/chauffeur-requests');
-            if (res.data?.success) {
-                const mapped = res.data.data.map(d => {
+            const res = await api.get('/logistics/deliveries');
+            if (!res.data?.success || !Array.isArray(res.data.data)) {
+                setChauffeurRequests([]);
+                return;
+            }
+            const mapped = res.data.data
+                .filter((d) => String(d.mission_type || '').toLowerCase() === 'chauffeur')
+                .map((d) => {
                     let passengerData = {};
                     if (d.passenger_info) {
                         try {
                             passengerData = typeof d.passenger_info === 'string' ? JSON.parse(d.passenger_info) : d.passenger_info;
-                        } catch (e) { /* ignore parse error */ }
+                        } catch (e) { /* ignore */ }
                     }
+                    const due = d.delivery_date?.split('T')[0] || null;
                     return {
                         id: d.id,
                         clientId: d.client_id || d.company_id,
                         company_id: d.company_id,
                         created_by: d.created_by,
-                        clientName: d.clientName || 'VIP Guest',
+                        clientName: d.client_name || passengerData.clientName || d.customer_name || 'Client',
                         driverName: d.driver_name || null,
                         plateNumber: d.plate_number || null,
-                        serviceType: passengerData.serviceType || d.mission_type,
+                        driverPhotoUrl:
+                            passengerData.driverPhotoUrl
+                            || passengerData.driver_photo_url
+                            || d.driver_profile_url
+                            || null,
+                        driver_user_id: passengerData.driver_user_id || passengerData.driverUserId || null,
+                        serviceType: passengerData.serviceType || 'One Way',
                         pickupLocation: d.pickup_location,
                         dropLocation: d.drop_location,
-                        dueDate: d.delivery_date?.split('T')[0] || null,
-                        pickupDate: d.delivery_date?.split('T')[0] || null,
+                        dueDate: due,
+                        pickupDate: due,
                         pickupTime: d.pickup_time || null,
                         status: d.status,
+                        chauffeurFee: parseFloat(
+                            passengerData.chauffeurFee
+                            ?? passengerData.chauffeur_fee
+                            ?? d.total_amount
+                            ?? d.amount
+                            ?? 0
+                        ) || 0,
+                        chauffeur_fee_mode: passengerData.chauffeur_fee_mode || 'separate',
                         numberOfPassengers: passengerData.passengers || 1,
                         luggage: passengerData.luggage || 'No',
                         bags: passengerData.bags || 0,
@@ -2687,11 +3598,12 @@ export const GlobalDataProvider = ({ children }) => {
                         returnDate: passengerData.returnDate || null,
                         returnTime: passengerData.returnTime || null,
                         numberOfDays: passengerData.numberOfDays || null,
-                        requestDate: d.created_at?.split('T')[0] || null
+                        requestDate: d.created_at?.split('T')[0] || null,
+                        adminApproved: !!passengerData.adminApproved,
+                        _passengerInfo: passengerData,
                     };
                 });
-                setChauffeurRequests(mapped);
-            }
+            setChauffeurRequests(mapped);
         } catch (error) {
             console.error("Failed to fetch chauffeur requests:", error);
         }
@@ -2712,7 +3624,7 @@ export const GlobalDataProvider = ({ children }) => {
         try {
             const user = users.find(u => u.id === userId);
             const newStatus = forcedStatus !== null ? forcedStatus : (user ? !user.isAvailable : true);
-            
+
             await api.put(`/staff/${userId}`, { is_available: newStatus });
 
             setUsers(prev => prev.map(u => u.id === userId ? { ...u, isAvailable: newStatus } : u));
@@ -2849,8 +3761,8 @@ export const GlobalDataProvider = ({ children }) => {
         }
     };
 
-    const TRACKING_ENDPOINTS = ['/logistics/tracking', '/tracking'];
-    const URGENT_ENDPOINTS = ['/logistics/urgent', '/logistics/urgent-tasks', '/support/urgent'];
+    const TRACKING_ENDPOINTS = ['/logistics/tracking'];
+    const URGENT_ENDPOINTS = ['/logistics/urgent'];
 
     const fetchTracking = React.useCallback(async () => {
         if (trackingApiUnavailableRef.current) return;
@@ -3040,6 +3952,23 @@ export const GlobalDataProvider = ({ children }) => {
 
     const addChauffeurRequest = async (request) => {
         try {
+            const fee = Number(request.chauffeurFee ?? request.chauffeur_fee ?? 0) || 0;
+            const passengerPayload = {
+                passengers: request.numberOfPassengers,
+                luggage: request.luggage,
+                amenities: request.amenities,
+                chauffeurFee: fee,
+                chauffeur_fee: fee,
+                chauffeur_fee_mode: request.chauffeur_fee_mode || 'separate',
+                serviceType: request.serviceType,
+                returnDate: request.returnDate || null,
+                returnTime: request.returnTime || null,
+                numberOfDays: request.numberOfDays || null,
+                stops: request.stops || 'No',
+                stopLocations: request.stopLocations || null,
+                bags: request.bags || 0,
+                clientName: request.clientName || null,
+            };
             const reqData = {
                 mission_type: 'Chauffeur',
                 company_id: request.clientId && request.clientId !== 'CLT-GUEST' ? request.clientId : null,
@@ -3047,25 +3976,17 @@ export const GlobalDataProvider = ({ children }) => {
                 drop_location: request.dropLocation,
                 delivery_date: request.dueDate || null,
                 pickup_time: request.pickupTime || null,
+                total_amount: fee,
+                estimated_total: fee,
                 driver_name: request.driverName || null,
                 plate_number: request.plateNumber || null,
-                passenger_info: JSON.stringify({
-                    passengers: request.numberOfPassengers,
-                    luggage: request.luggage,
-                    amenities: request.amenities,
-                    serviceType: request.serviceType,
-                    returnDate: request.returnDate || null,
-                    returnTime: request.returnTime || null,
-                    numberOfDays: request.numberOfDays || null,
-                    stops: request.stops || 'No',
-                    stopLocations: request.stopLocations || null,
-                    bags: request.bags || 0
-                }),
-                status: request.driverName ? 'assigned' : 'pending_review'
+                passenger_info: JSON.stringify(passengerPayload),
+                status: request.driverName ? 'assigned' : 'pending',
             };
             const res = await api.post('/logistics/deliveries', reqData);
             if (res.data?.success) {
-                fetchChauffeurRequests();
+                await fetchChauffeurRequests();
+                await fetchDeliveries();
                 addLog({ action: 'Chauffeur Dispatched', detail: `VIP Transport secured for ${request.clientName}.`, type: 'system' });
             }
         } catch (error) {
@@ -3077,12 +3998,38 @@ export const GlobalDataProvider = ({ children }) => {
 
     const updateChauffeurRequest = async (updated) => {
         try {
-            await api.patch(`/logistics/deliveries/${updated.id}/status`, {
-                status: updated.status,
-                driver_name: updated.driverName || updated.driver_name || undefined,
-                plate_number: updated.plateNumber || updated.plate_number || undefined
-            });
-            fetchChauffeurRequests();
+            const apiStatus = toApiDeliveryStatus(updated.status);
+            const patch = { status: apiStatus };
+            if (updated.driverName != null || updated.driver_name != null) {
+                patch.driver_name = updated.driverName ?? updated.driver_name ?? '';
+            }
+            if (updated.plateNumber != null || updated.plate_number != null) {
+                patch.plate_number = updated.plateNumber ?? updated.plate_number ?? '';
+            }
+            if (updated.passenger_info !== undefined && updated.passenger_info !== null) {
+                patch.passenger_info = typeof updated.passenger_info === 'string'
+                    ? updated.passenger_info
+                    : JSON.stringify(updated.passenger_info);
+            }
+            let piObj = {};
+            try {
+                const rawPi = updated.passenger_info ?? updated._passengerInfo;
+                if (typeof rawPi === 'string') {
+                    piObj = JSON.parse(rawPi || '{}');
+                } else if (rawPi && typeof rawPi === 'object') {
+                    piObj = rawPi;
+                }
+            } catch {
+                piObj = {};
+            }
+            const driverUid = piObj.driver_user_id ?? piObj.driverUserId ?? updated.driver_user_id;
+            if (driverUid != null && driverUid !== '') {
+                const n = Number(driverUid);
+                patch.assigned_driver = Number.isFinite(n) && !Number.isNaN(n) ? n : driverUid;
+            }
+            await api.patch(`/logistics/deliveries/${updated.id}/status`, patch);
+            await fetchChauffeurRequests();
+            await fetchDeliveries();
             addLog({ action: 'Chauffeur Updated', detail: `Protocol ID ${updated.id} status recalibrated.`, type: 'system' });
         } catch (error) {
             console.error("Failed to update chauffeur request:", error);
@@ -3150,9 +4097,7 @@ export const GlobalDataProvider = ({ children }) => {
             formData.append('guest_count', event.guestCount || event.guests || 0);
             if (event.imageFile) formData.append('image', event.imageFile);
 
-            const res = await api.post('/support/events', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            const res = await api.post('/support/events', formData);
             if (res.data?.success) {
                 const newEvt = {
                     ...res.data.data,
@@ -3184,9 +4129,7 @@ export const GlobalDataProvider = ({ children }) => {
             formData.append('guest_count', updated.guestCount || updated.guests || 0);
             if (updated.imageFile) formData.append('image', updated.imageFile);
 
-            await api.put(`/support/events/${updated.id}`, formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+            await api.put(`/support/events/${updated.id}`, formData);
             await fetchTickets();
             addLog({ action: 'Event Update', detail: `Synchronized details for ${updated.title}.`, type: 'system' });
         } catch (error) {
@@ -3205,8 +4148,45 @@ export const GlobalDataProvider = ({ children }) => {
     };
 
     const [deliveryPricing, setDeliveryPricing] = useState([]);
+    const [shippingModePricing, setShippingModePricing] = useState(() => readShippingModePricing());
 
     const [saasRequests, setSaasRequests] = useState([]);
+
+    React.useEffect(() => {
+        const s = systemSettings || {};
+        const hasApiValues =
+            s.shipping_road_charge != null || s.shippingRoadCharge != null ||
+            s.shipping_sea_charge != null || s.shippingSeaCharge != null ||
+            s.shipping_air_charge != null || s.shippingAirCharge != null;
+        if (!hasApiValues) return;
+        const next = {
+            Road: Number(s.shipping_road_charge ?? s.shippingRoadCharge ?? 0) || 0,
+            Sea: Number(s.shipping_sea_charge ?? s.shippingSeaCharge ?? 150) || 150,
+            Air: Number(s.shipping_air_charge ?? s.shippingAirCharge ?? 300) || 300,
+        };
+        setShippingModePricing(next);
+        writeShippingModePricing(next);
+    }, [systemSettings]);
+
+    const updateShippingModePricing = async (nextPricing) => {
+        const normalized = {
+            Road: Number(nextPricing?.Road) >= 0 ? Number(nextPricing.Road) : 0,
+            Sea: Number(nextPricing?.Sea) >= 0 ? Number(nextPricing.Sea) : 150,
+            Air: Number(nextPricing?.Air) >= 0 ? Number(nextPricing.Air) : 300,
+        };
+        setShippingModePricing(normalized);
+        writeShippingModePricing(normalized);
+        try {
+            await api.put('/settings/system', {
+                shipping_road_charge: normalized.Road,
+                shipping_sea_charge: normalized.Sea,
+                shipping_air_charge: normalized.Air,
+            });
+        } catch (e) {
+            console.warn('Could not persist shipping pricing to backend, using local value:', e?.response?.data || e?.message);
+        }
+        return true;
+    };
 
 
 
@@ -3293,10 +4273,12 @@ export const GlobalDataProvider = ({ children }) => {
                 id = ticketOrId.db_id || ticketOrId.id;
                 // Strip prefix if needed
                 if (typeof id === 'string' && id.includes('-')) id = id.split('-')[1];
-                
+
                 payload = {
                     status: (ticketOrId.status || 'open').toLowerCase().replace(' ', '_'),
-                    messages: ticketOrId.messages
+                    messages: ticketOrId.messages,
+                    dispute_status: ticketOrId.dispute_status || 'none',
+                    refund_amount: ticketOrId.refund_amount || 0
                 };
             } else {
                 id = ticketOrId;
@@ -3523,7 +4505,7 @@ export const GlobalDataProvider = ({ children }) => {
     return (
         <GlobalDataContext.Provider value={{
             // Auth & User
-            currentUser, setCurrentUser, hasPermission, menuPermissions, setMenuPermissions, hasMenuPermission, roles: ['super_admin', 'operations', 'procurement', 'inventory', 'logistics', 'finance', 'sales', 'support'],
+            currentUser, setCurrentUser, activatePersonalMembership, hasPermission, menuPermissions, setMenuPermissions, hasMenuPermission, roles: ['super_admin', 'operations', 'procurement', 'inventory', 'logistics', 'finance', 'sales', 'support'],
 
             // Notifications
             notifications, unreadCount, fetchNotifications, markNotificationRead, markAllNotificationsRead,
@@ -3545,7 +4527,7 @@ export const GlobalDataProvider = ({ children }) => {
             stockMovements, addStockEntry, issueStock,
 
             // Procurement
-            vendors, setVendors, fetchVendors, addVendor, updateVendor, deleteVendor,
+            vendors, marketplaceVendors, setVendors, fetchVendors, addVendor, updateVendor, deleteVendor,
             purchaseRequests, setPurchaseRequests, addPurchaseRequest, updatePurchaseRequest, deletePurchaseRequest, fetchPurchaseRequests,
             quotes, setQuotes, addQuote, updateQuote, deleteQuote, fetchProcurement, fetchQuotes,
             purchaseOrders, setPurchaseOrders, addPurchaseOrder, updatePurchaseOrder, receiveGoodsAgainstPO, reverseGoodsReceipt, fetchPurchaseOrders,
@@ -3561,7 +4543,7 @@ export const GlobalDataProvider = ({ children }) => {
             deliveries, setDeliveries, fetchDeliveries, addDelivery, updateDelivery, deleteDelivery, confirmDeliveryReceipt,
             routes, setRoutes, fetchRoutes, addRoute, updateRoute, deleteRoute,
             urgentTasks, fetchUrgentTasks, addUrgentTask, updateUrgentTask, deleteUrgentTask,
-            deliveryPricing, updateDeliveryPricing: updateDeliveryPricingTier, tracking, fetchTracking, addTracking, updateTracking, deleteTracking,
+            deliveryPricing, updateDeliveryPricing: updateDeliveryPricingTier, shippingModePricing, updateShippingModePricing, tracking, fetchTracking, addTracking, updateTracking, deleteTracking,
             warehouses, setWarehouses, fetchWarehouses, addWarehouse, updateWarehouse, deleteWarehouse,
 
             // Concierge & Support

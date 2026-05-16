@@ -14,6 +14,7 @@ const SupportDashboard = () => {
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [replyText, setReplyText] = useState('');
+    const [refundAmount, setRefundAmount] = useState(0);
 
     const filteredTickets = supportTickets.filter(t => {
         const matchesSearch = t.clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -25,6 +26,7 @@ const SupportDashboard = () => {
 
     const handleOpenTicket = (ticket) => {
         setSelectedTicket(ticket);
+        setRefundAmount(ticket.refund_amount || 0);
         setIsModalOpen(true);
     };
 
@@ -55,6 +57,17 @@ const SupportDashboard = () => {
         }
     };
 
+    const handleDisputeAction = (action, amount = 0) => {
+        const updated = {
+            ...selectedTicket,
+            dispute_status: action,
+            refund_amount: amount,
+            status: action === 'accepted' ? 'Resolved' : selectedTicket.status
+        };
+        updateSupportTicket(updated);
+        setSelectedTicket(updated);
+    };
+
     const columns = [
         { header: "Ticket ID", accessor: "id" },
         { header: "Client", accessor: "clientName" },
@@ -79,6 +92,19 @@ const SupportDashboard = () => {
                     row.status === 'In Progress' ? 'bg-warning/20 text-warning' : 'bg-success/20 text-success'
                     }`}>
                     {row.status}
+                </span>
+            )
+        },
+        { 
+            header: "Dispute", 
+            accessor: "dispute_status",
+            render: (row) => (
+                <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase ${
+                    row.dispute_status === 'accepted' ? 'bg-success/20 text-success' :
+                    row.dispute_status === 'rejected' ? 'bg-danger/20 text-danger' :
+                    row.dispute_status === 'pending' ? 'bg-warning/20 text-warning' : 'hidden'
+                }`}>
+                    {row.dispute_status}
                 </span>
             )
         },
@@ -195,6 +221,16 @@ const SupportDashboard = () => {
                                             </span>
                                         </div>
                                         <p className="text-sm leading-relaxed">{msg.text}</p>
+                                        {msg.attachments && Object.values(msg.attachments).some(a => a) && (
+                                            <div className="mt-3 flex flex-wrap gap-2">
+                                                {Object.entries(msg.attachments).map(([type, url]) => url && (
+                                                    <div key={type} className="px-3 py-2 bg-white/5 border border-white/10 rounded-xl flex items-center gap-2">
+                                                        <span className="text-[8px] font-black uppercase tracking-widest text-accent">{type}</span>
+                                                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-[10px] hover:underline text-secondary">View File</a>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                         <p className="text-[8px] text-muted text-right mt-2">{msg.time}</p>
                                     </div>
                                 </div>
@@ -203,10 +239,58 @@ const SupportDashboard = () => {
 
                         {selectedTicket.status !== 'Resolved' && (
                             <div className="mt-auto space-y-4">
+                                {/* Dispute Management Area */}
+                                <div className="p-4 bg-accent/[0.03] border border-accent/20 rounded-2xl space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-[10px] font-black text-accent uppercase tracking-widest">Dispute Investigation</p>
+                                        <span className={`text-[9px] font-black px-2 py-0.5 rounded uppercase ${
+                                            selectedTicket.dispute_status === 'pending' ? 'bg-warning text-black' :
+                                            selectedTicket.dispute_status === 'accepted' ? 'bg-success text-white' :
+                                            selectedTicket.dispute_status === 'rejected' ? 'bg-danger text-white' : 'bg-white/10 text-muted'
+                                        }`}>
+                                            Status: {selectedTicket.dispute_status || 'none'}
+                                        </span>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-black text-muted uppercase">Refund Amount ($)</label>
+                                            <input 
+                                                type="number"
+                                                value={refundAmount}
+                                                onChange={(e) => setRefundAmount(parseFloat(e.target.value))}
+                                                className="w-full bg-background border border-border rounded-xl px-4 py-2 text-sm focus:border-accent outline-none font-bold"
+                                            />
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => handleDisputeAction('accepted', refundAmount)}
+                                                className="flex-1 py-2 bg-success text-white rounded-xl text-[9px] font-black uppercase hover:bg-success/80 transition-all"
+                                            >
+                                                Accept & Refund
+                                            </button>
+                                            <button 
+                                                onClick={() => handleDisputeAction('rejected', 0)}
+                                                className="flex-1 py-2 bg-danger/20 text-danger border border-danger/30 rounded-xl text-[9px] font-black uppercase hover:bg-danger hover:text-white transition-all"
+                                            >
+                                                Reject Dispute
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {selectedTicket.dispute_status === 'none' && (
+                                        <button 
+                                            onClick={() => handleDisputeAction('pending', 0)}
+                                            className="w-full py-2 bg-white/5 border border-white/10 text-white rounded-xl text-[9px] font-black uppercase hover:border-accent/40 transition-all"
+                                        >
+                                            Mark as Active Dispute
+                                        </button>
+                                    )}
+                                </div>
+
                                 <div className="relative">
                                     <textarea
                                         placeholder="Type your official response..."
-                                        className="w-full bg-background border border-border rounded-2xl p-4 pr-16 text-sm focus:border-accent outline-none min-h-[100px] resize-none"
+                                        className="w-full bg-background border border-border rounded-2xl p-4 pr-16 text-sm focus:border-accent outline-none min-h-[80px] resize-none"
                                         value={replyText}
                                         onChange={(e) => setReplyText(e.target.value)}
                                     />

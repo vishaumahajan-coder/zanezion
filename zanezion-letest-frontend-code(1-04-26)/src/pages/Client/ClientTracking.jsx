@@ -2,11 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { MapPin, Truck, Box, Clock, ChevronRight, Globe, CheckCircle2, Package, ShieldCheck } from 'lucide-react';
 import { useData } from '../../context/GlobalDataContext';
 import Modal from '../../components/Modal';
+import { Link } from 'react-router-dom';
 
 const ClientTracking = () => {
     const { deliveries, orders, currentUser, clients, confirmDeliveryReceipt, fetchDeliveries, fetchOrders, fetchClients } = useData();
     const [manifestModal, setManifestModal] = useState({ isOpen: false, delivery: null });
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, deliveryId: null, name: '' });
+    const norm = (v) => String(v ?? '').trim().toLowerCase();
+    const digits = (v) => {
+        const d = String(v ?? '').replace(/\D/g, '');
+        return d ? String(parseInt(d, 10)) : '';
+    };
 
     useEffect(() => {
         fetchDeliveries();
@@ -26,29 +32,70 @@ const ClientTracking = () => {
 
     // For customer role: filter by personal details
     // For other roles: filter by client/company association
-    const myOrderIds = (orders || [])
-        .filter(o => {
-            if (myClient && (o.companyId === myClient.id || o.company_id === myClient.id || o.clientId === myClient.id)) return true;
-            if (isCustomerRole) {
-                return (
-                    o.email?.toLowerCase() === currentUser?.email?.toLowerCase() || 
-                    o.client?.toLowerCase() === currentUser?.name?.toLowerCase() ||
-                    String(o.customer_id) === String(currentUser?.id)
-                );
-            }
-            return false;
-        })
-        .map(o => o.id);
-
-    const myDeliveries = (deliveries || []).filter(d => {
-        const orderMatch = myOrderIds.includes(d.order_id_raw);
-        const clientMatch = myClient && (d.clientId === myClient.id || d.client === myClient.name);
-        const personalMatch = isCustomerRole && (
-            d.client?.toLowerCase() === currentUser?.name?.toLowerCase() || 
-            d.email?.toLowerCase() === currentUser?.email?.toLowerCase()
-        );
-        return orderMatch || clientMatch || personalMatch;
+    const ownedOrders = (orders || []).filter((o) => {
+        const orderCompany = o.companyId ?? o.company_id;
+        const orderClient = o.clientId ?? o.client_id;
+        const orderCustomer = o.customer_id ?? o.customerId;
+        if (isCustomerRole) {
+            return (
+                String(orderCustomer) === String(currentUser?.id) ||
+                norm(o.email) === norm(currentUser?.email) ||
+                norm(o.client) === norm(currentUser?.name)
+            );
+        }
+        if (myClient) {
+            return String(orderCompany) === String(myClient.id) || String(orderClient) === String(myClient.id);
+        }
+        return false;
     });
+
+    const myOrderIdSet = new Set(
+        ownedOrders.flatMap((o) => {
+            const raw = String(o.id ?? '').trim();
+            const num = digits(raw);
+            return [raw, num].filter(Boolean);
+        })
+    );
+
+    const myDeliveries = (deliveries || []).filter((d) => {
+        const deliveryOrderRaw = String(d.order_id_raw ?? d.orderId ?? '').trim();
+        const deliveryOrderNum = digits(deliveryOrderRaw);
+        const orderMatch = myOrderIdSet.has(deliveryOrderRaw) || (deliveryOrderNum && myOrderIdSet.has(deliveryOrderNum));
+        if (orderMatch) return true;
+
+        // Fallback match only when delivery has explicit ownership fields.
+        const deliveryClientId = d.clientId ?? d.client_id ?? d.company_id;
+        const deliveryCustomerId = d.customer_id ?? d.customerId;
+        if (isCustomerRole) {
+            return String(deliveryCustomerId) === String(currentUser?.id);
+        }
+        if (myClient) {
+            return String(deliveryClientId) === String(myClient.id);
+        }
+        return false;
+    });
+    const syntheticOrderTracking = ownedOrders
+        .filter((o) => {
+            const raw = String(o.id ?? '').trim();
+            const num = digits(raw);
+            return !(myDeliveries || []).some((d) => {
+                const dRaw = String(d.order_id_raw ?? d.orderId ?? '').trim();
+                const dNum = digits(dRaw);
+                return (raw && dRaw && raw === dRaw) || (num && dNum && num === dNum);
+            });
+        })
+        .map((o) => ({
+            id: `DEL-PENDING-${o.id}`,
+            item: (Array.isArray(o.items) && o.items[0]?.name) ? o.items[0].name : `Order ${o.id}`,
+            items: Array.isArray(o.items) ? o.items : [],
+            location: o.location || o.deliveryAddress || 'Destination',
+            status: String(o.status || '').toLowerCase().includes('completed') ? 'Delivered' : 'Pending',
+            eta: o.dueDate || o.orderDate || 'TBD',
+            order_id_raw: o.id,
+            clientConfirmed: false,
+            mode: o.deliveryType || o.delivery_mode || 'Road',
+        }));
+    const visibleDeliveries = [...myDeliveries, ...syntheticOrderTracking];
 
     const handleConfirmSubmit = () => {
         if (confirmModal.name.trim()) {
@@ -57,22 +104,40 @@ const ClientTracking = () => {
         }
     };
 
+    const getStatusKey = (s) => String(s || '').toLowerCase().replace(/\s+/g, '_');
+    const isMoving = (s) => {
+        const k = getStatusKey(s);
+        return ['in_transit', 'en_route', 'dispatched', 'out_for_delivery', 'assigned', 'accepted'].includes(k);
+    };
+    const isArrived = (s) => {
+        const k = getStatusKey(s);
+        return ['delivered', 'completed'].includes(k);
+    };
+
     return (
         <div className="space-y-8">
             <div>
                 <h1 className="text-3xl font-bold tracking-tight text-white">Real-Time Logistics</h1>
                 <p className="text-secondary mt-1">Institutional transit monitoring for active global shipments.</p>
             </div>
+            <div className="glass-card p-4 border border-accent/25 bg-accent/[0.03] flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <p className="text-xs text-secondary">
+                    Marketplace orders are tracked here. Chauffeur rides are tracked separately in the chauffeur protocol.
+                </p>
+                <Link to="/dashboard/chauffeur" className="btn-secondary text-[10px] font-black uppercase tracking-widest py-2 px-4">
+                    Open Chauffeur Tracking
+                </Link>
+            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-6">
-                    {myDeliveries.length === 0 ? (
+                    {visibleDeliveries.length === 0 ? (
                         <div className="glass-card p-12 text-center">
                             <Truck size={48} className="text-muted mx-auto mb-4" />
                             <p className="text-secondary font-bold">No active deliveries found.</p>
                             <p className="text-muted text-sm mt-1">Place an order to track your shipments here.</p>
                         </div>
-                    ) : myDeliveries.map((delivery) => (
+                    ) : visibleDeliveries.map((delivery) => (
                         <div key={delivery.id} className="glass-card p-6 overflow-hidden relative group">
 
                             <div className="flex flex-col md:flex-row justify-between gap-6 mb-8">
@@ -100,31 +165,30 @@ const ClientTracking = () => {
                                 <div
                                     className="absolute top-5 left-0 h-0.5 bg-accent shadow-[0_0_10px_rgba(200,169,106,0.3)] transition-all duration-700"
                                     style={{
-                                        width: delivery.clientConfirmed
+                                        width: (delivery.clientConfirmed && isArrived(delivery.status))
                                             ? '100%'
-                                            : (delivery.status === 'Delivered' || delivery.status === 'Completed')
+                                            : delivery.clientConfirmed
                                                 ? '75%'
-                                                : delivery.status === 'In Transit' ? '40%' : '10%'
+                                                : isArrived(delivery.status)
+                                                    ? '50%'
+                                                    : (isMoving(delivery.status) || getStatusKey(delivery.status) === 'pending_pickup') ? '25%' : '0%'
                                     }}
                                 />
 
                                 <div className="relative flex justify-between">
                                     {[
-                                        { label: 'Dispatched', icon: Box, active: true },
-                                        { label: 'In Transit', icon: Globe, active: delivery.status !== 'Pending' },
-                                        {
-                                            label: delivery.isAbroad ? 'Customs Clear' : 'Dispatch Verified',
-                                            icon: Clock,
-                                            active: delivery.status === 'Delivered' || delivery.status === 'Completed'
-                                        },
-                                        { label: 'Client Acknowledged', icon: MapPin, active: delivery.clientConfirmed }
+                                        { label: 'Order Dispatched', icon: Box, active: true },
+                                        { label: 'In Transit', icon: Truck, active: isMoving(delivery.status) || getStatusKey(delivery.status) === 'pending_pickup' || isArrived(delivery.status) || delivery.clientConfirmed },
+                                        { label: 'Dispatch Verified', icon: ShieldCheck, active: isArrived(delivery.status) || delivery.clientConfirmed },
+                                        { label: 'Client Acknowledgement', icon: MapPin, active: delivery.clientConfirmed },
+                                        { label: 'Completed', icon: CheckCircle2, active: delivery.clientConfirmed && isArrived(delivery.status) }
                                     ].map((step, idx) => (
-                                        <div key={idx} className="flex flex-col items-center">
+                                        <div key={idx} className="flex flex-col items-center flex-1">
                                             <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-500 z-10 ${step.active ? 'bg-background border-accent text-accent' : 'bg-background border-border text-muted'
                                                 }`}>
                                                 <step.icon size={18} />
                                             </div>
-                                            <span className={`text-[9px] font-bold uppercase mt-3 tracking-tighter ${step.active ? 'text-white' : 'text-muted'}`}>
+                                            <span className={`text-[9px] font-bold uppercase mt-3 tracking-tighter text-center ${step.active ? 'text-white' : 'text-muted'}`}>
                                                 {step.label}
                                             </span>
                                         </div>
@@ -143,7 +207,7 @@ const ClientTracking = () => {
                                         <div className="w-2 h-2 bg-success rounded-full" />
                                         <span className="text-[10px] font-bold text-success uppercase tracking-widest">Receipt Verified & Finalized</span>
                                     </div>
-                                ) : (delivery.status === 'Delivered' || delivery.status === 'Completed' || delivery.status === 'In Transit') ? (
+                                ) : (isArrived(delivery.status) || isMoving(delivery.status)) ? (
                                     <div className="flex items-center gap-4">
                                         <button
                                             className="text-[10px] font-black text-accent uppercase hover:underline flex items-center gap-1 group"
